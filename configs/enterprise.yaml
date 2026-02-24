@@ -1,0 +1,145 @@
+# ZSE Enterprise Configuration
+# Use with: zse serve model --config configs/enterprise.yaml
+
+mode: enterprise
+
+# Server settings
+server:
+  host: 0.0.0.0
+  port: 8000
+  workers: auto                   # Based on CPU cores
+  reload: false
+  
+# Authentication
+auth:
+  enabled: true
+  providers:
+    - type: api_key
+      header: X-API-Key
+      # Keys stored in database or environment
+    - type: oauth2
+      issuer: ${OAUTH2_ISSUER}
+      audience: zse-api
+      # Example: issuer: https://auth.company.com
+  rbac:
+    enabled: true
+    admin_roles:
+      - zse-admin
+      - platform-admin
+
+# Database
+database:
+  backend: postgresql
+  url: ${DATABASE_URL}
+  # Example: postgresql://user:pass@localhost:5432/zse
+  pool_size: 20
+  max_overflow: 10
+
+# Cache (Redis)
+cache:
+  backend: redis
+  url: ${REDIS_URL}
+  # Example: redis://localhost:6379/0
+  
+# Rate limiting
+rate_limiting:
+  enabled: true
+  backend: redis                  # Uses cache.url
+  default: 100/minute
+  tiers:
+    free: 10/minute
+    pro: 100/minute
+    enterprise: 1000/minute
+    unlimited: 0                  # No limit
+
+# Logging
+logging:
+  level: INFO
+  output: json
+  destination: elasticsearch
+  elasticsearch_url: ${ELASTIC_URL}
+  # Example: http://localhost:9200
+
+# Monitoring
+monitoring:
+  prometheus:
+    enabled: true
+    port: 9090
+    path: /metrics
+  healthcheck:
+    endpoint: /health
+    interval: 30s
+  alerting:
+    enabled: true
+    # PagerDuty integration
+    pagerduty_key: ${PAGERDUTY_KEY}
+    # Slack integration
+    slack_webhook: ${SLACK_WEBHOOK}
+
+# Model storage
+storage:
+  backend: s3
+  bucket: ${S3_BUCKET}
+  region: ${AWS_REGION}
+  # Example: bucket: zse-models, region: us-east-1
+  # Credentials from environment: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+
+# Audit logging
+audit:
+  enabled: true
+  log_requests: true
+  log_responses: false            # Privacy: don't log response content
+  retention_days: 90
+  destination: elasticsearch      # Same as logging.elasticsearch_url
+
+# Multi-tenancy
+multitenancy:
+  enabled: true
+  isolation: namespace            # namespace | full
+  default_quota:
+    max_models: 5
+    max_concurrent_requests: 10
+    max_requests_per_day: 10000
+    max_tokens_per_day: 1000000
+
+# Inference settings
+inference:
+  default_efficiency: balanced
+  max_batch_size: 32
+  max_sequence_length: 32768
+  timeout_seconds: 300
+
+# Memory settings
+memory:
+  max_gpu_memory_fraction: 0.95
+  max_cpu_memory_fraction: 0.9
+  reserved_gpu_memory_gb: 1.0     # Reserve for system
+
+# CUDA settings
+cuda:
+  memory_pool: cuda_malloc_async  # Better for production
+  allow_tf32: true
+  allow_fp16_accumulation: false
+
+# Scaling
+scaling:
+  auto_scaling:
+    enabled: true
+    min_replicas: 2
+    max_replicas: 10
+    target_gpu_utilization: 0.8
+    scale_up_threshold: 0.8
+    scale_down_threshold: 0.3
+    cooldown_seconds: 300
+
+# TLS/SSL
+tls:
+  enabled: true
+  cert_file: ${TLS_CERT_FILE}
+  key_file: ${TLS_KEY_FILE}
+  # Or use Let's Encrypt
+  # acme:
+  #   enabled: true
+  #   email: admin@company.com
+  #   domains:
+  #     - zse.company.com

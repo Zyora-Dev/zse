@@ -1,0 +1,56 @@
+# ZSE Developer Configuration
+# Use with: zse serve model --config configs/dev.yaml
+
+mode: developer
+
+# Server settings
+server:
+  host: 127.0.0.1
+  port: 8000
+  workers: 1
+  reload: true                    # Hot reload for development
+
+# Authentication (disabled for dev)
+auth:
+  enabled: false
+
+# Database (SQLite for dev)
+database:
+  backend: sqlite
+  path: ~/.zse/zse.db
+
+# Logging
+logging:
+  level: DEBUG
+  output: console
+  format: pretty                  # pretty | json
+
+# Model storage
+storage:
+  backend: local
+  path: ~/.zse/models
+
+# Inference defaults
+inference:
+  default_efficiency: balanced
+  max_batch_size: 8
+  max_sequence_length: 4096
+
+# Features
+features:
+  playground: true                # Enable playground UI
+  swagger_docs: true              # Enable /docs
+  metrics: false                  # Disable Prometheus metrics
+  profiling: true                 # Enable profiling endpoints
+
+# Memory settings
+memory:
+  # Use percentage of free memory, not total
+  max_gpu_memory_fraction: 0.9    # Leave 10% free
+  max_cpu_memory_fraction: 0.8    # Leave 20% free for system
+
+# CUDA settings
+cuda:
+  memory_pool: pytorch            # pytorch | cuda_malloc_async
+  allow_tf32: true
+  allow_fp16_accumulation: false
