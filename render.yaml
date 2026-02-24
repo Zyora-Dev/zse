@@ -1,0 +1,53 @@
+# Render.com Blueprint
+# https://render.com/docs/blueprint-spec
+#
+# Deploy: https://render.com/deploy?repo=https://github.com/Zyora-Dev/zse
+
+services:
+  # ==========================================================================
+  # ZSE Server - Web Service
+  # ==========================================================================
+  - type: web
+    name: zse
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    
+    # Instance configuration
+    plan: starter  # Can be: starter, standard, pro
+    region: oregon  # or: ohio, virginia, frankfurt, singapore
+    
+    # Health check
+    healthCheckPath: /health
+    
+    # Environment variables
+    envVars:
+      - key: ZSE_MODEL
+        value: ""  # Optional: pre-load a model
+        sync: false
+      - key: ZSE_QUANTIZATION
+        value: auto
+        sync: false
+      - key: ZSE_DEVICE
+        value: cpu
+        sync: false
+    
+    # Persistent disk for model cache (optional)
+    disk:
+      name: zse-models
+      mountPath: /home/zse/.cache/huggingface
+      sizeGB: 50
+
+  # ==========================================================================
+  # ZSE Server - GPU (if Render supports GPU in your region)
+  # ==========================================================================
+  # - type: web
+  #   name: zse-gpu
+  #   runtime: docker
+  #   dockerfilePath: ./Dockerfile
+  #   dockerContext: .
+  #   plan: gpu-small  # GPU instances
+  #   healthCheckPath: /health
+  #   envVars:
+  #     - key: ZSE_DEVICE
+  #       value: cuda

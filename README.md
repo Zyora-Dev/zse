@@ -1,7 +1,9 @@
 # ZSE - Z Server Engine
 
-[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template?repo=https://github.com/Zyora-Dev/zse)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Zyora-Dev/zse)
 
 **Ultra memory-efficient LLM inference engine.**
 
@@ -164,6 +166,27 @@ zse serve ./model.gguf
 ```
 
 Note: GGUF uses llama.cpp for inference. Native ZSE engine handles HuggingFace, safetensors, and .zse formats.
+
+## Docker Deployment
+
+```bash
+# CPU
+docker run -p 8000:8000 ghcr.io/zyora-dev/zse:latest
+
+# GPU (NVIDIA)
+docker run --gpus all -p 8000:8000 ghcr.io/zyora-dev/zse:gpu
+
+# With model pre-loaded
+docker run -p 8000:8000 -e ZSE_MODEL=Qwen/Qwen2.5-0.5B-Instruct ghcr.io/zyora-dev/zse:latest
+```
+
+**Docker Compose:**
+```bash
+docker-compose up -d                    # CPU
+docker-compose --profile gpu up -d      # GPU
+```
+
+See [deploy/DEPLOY.md](deploy/DEPLOY.md) for full deployment guide including Runpod, Vast.ai, Railway, Render, and Kubernetes.
 
 ## Development
 
