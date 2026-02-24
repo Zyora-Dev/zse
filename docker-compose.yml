@@ -1,0 +1,83 @@
+# ZSE Docker Compose Configuration
+#
+# Usage:
+#   CPU:  docker-compose up
+#   GPU:  docker-compose --profile gpu up
+#
+# Environment variables:
+#   ZSE_MODEL: Model to load (default: none, load via dashboard)
+#   ZSE_PORT: Server port (default: 8000)
+#   ZSE_QUANTIZATION: Quantization mode (default: auto)
+
+version: '3.8'
+
+services:
+  # ==========================================================================
+  # CPU-only Service
+  # ==========================================================================
+  zse:
+    build:
+      context: .
+      target: cpu
+    image: zse/zse:latest
+    container_name: zse-server
+    ports:
+      - "${ZSE_PORT:-8000}:8000"
+    environment:
+      - ZSE_MODEL=${ZSE_MODEL:-}
+      - ZSE_QUANTIZATION=${ZSE_QUANTIZATION:-auto}
+      - ZSE_DEVICE=cpu
+    volumes:
+      # Persist model cache
+      - zse-models:/home/zse/.cache/huggingface
+      # Persist API keys and audit logs
+      - zse-data:/home/zse/.zse
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ==========================================================================
+  # GPU Service (use with --profile gpu)
+  # ==========================================================================
+  zse-gpu:
+    build:
+      context: .
+      target: gpu
+    image: zse/zse:gpu
+    container_name: zse-server-gpu
+    profiles:
+      - gpu
+    ports:
+      - "${ZSE_PORT:-8000}:8000"
+    environment:
+      - ZSE_MODEL=${ZSE_MODEL:-}
+      - ZSE_QUANTIZATION=${ZSE_QUANTIZATION:-auto}
+      - ZSE_DEVICE=cuda
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - zse-models:/home/zse/.cache/huggingface
+      - zse-data:/home/zse/.zse
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  zse-models:
+    name: zse-models
+  zse-data:
+    name: zse-data
