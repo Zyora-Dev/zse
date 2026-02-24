@@ -50,29 +50,38 @@ pip install -e ".[dev]"
 ### Start Server
 
 ```bash
-# Basic usage
-zse serve meta-llama/Llama-3-8B
+# Any HuggingFace model works!
+zse serve Qwen/Qwen2.5-7B-Instruct
+zse serve meta-llama/Llama-3.1-8B-Instruct
+zse serve mistralai/Mistral-7B-Instruct-v0.3
+zse serve microsoft/Phi-3-mini-4k-instruct
+zse serve google/gemma-2-9b-it
 
-# With memory target
-zse serve meta-llama/Llama-3-70B --max-memory 24GB
+# With memory optimization
+zse serve Qwen/Qwen2.5-32B-Instruct --max-memory 24GB
 
 # With recommendations
-zse serve meta-llama/Llama-3-70B --recommend
+zse serve meta-llama/Llama-3.1-70B-Instruct --recommend
 
 # Ultra memory efficiency
-zse serve meta-llama/Llama-3-70B --efficiency ultra
+zse serve deepseek-ai/DeepSeek-V2-Lite --efficiency ultra
+
+# GGUF models (via llama.cpp)
+zse serve ./model-Q4_K_M.gguf
 ```
+
+> **💡 Supported Models:** Any HuggingFace transformers model, safetensors, GGUF, or .zse format. Popular choices: Qwen, Llama, Mistral, Phi, Gemma, DeepSeek, Yi, and more.
 
 ### Interactive Chat
 
 ```bash
-zse chat meta-llama/Llama-3-8B
+zse chat Qwen/Qwen2.5-7B-Instruct
 ```
 
 ### Convert to ZSE Format
 
 ```bash
-zse convert meta-llama/Llama-3-70B -o llama-70b.zse --target-memory 24GB
+zse convert Qwen/Qwen2.5-32B-Instruct -o qwen-32b.zse --target-memory 24GB
 ```
 
 ### Check Hardware
@@ -86,7 +95,7 @@ zse hardware
 ZSE provides an OpenAI-compatible API:
 
 ```bash
-zse serve meta-llama/Llama-3-8B --port 8000
+zse serve Qwen/Qwen2.5-7B-Instruct --port 8000
 ```
 
 ```python
@@ -95,7 +104,7 @@ import openai
 client = openai.OpenAI(base_url="http://localhost:8000/v1", api_key="zse")
 
 response = client.chat.completions.create(
-    model="meta-llama/Llama-3-8B",
+    model="Qwen/Qwen2.5-7B-Instruct",
     messages=[{"role": "user", "content": "Hello!"}]
 )
 print(response.choices[0].message.content)
