@@ -24,13 +24,10 @@ services:
     envVars:
       - key: ZSE_MODEL
         value: ""  # Optional: pre-load a model
-        sync: false
       - key: ZSE_QUANTIZATION
         value: auto
-        sync: false
       - key: ZSE_DEVICE
         value: cpu
-        sync: false
     
     # Persistent disk for model cache (optional)
     disk:
