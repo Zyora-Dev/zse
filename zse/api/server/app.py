@@ -19,6 +19,9 @@ from fastapi.staticfiles import StaticFiles
 
 from zse.api.server.auth import verify_api_key, get_key_manager, APIKey
 from zse.api.server.audit import add_audit_middleware, get_audit_logger
+from zse.api.server.chat_routes import router as chat_router
+from zse.api.server.rag_routes import router as rag_router
+from zse.api.server.mcp_routes import router as mcp_router
 
 from zse.api.server.models import (
     # OpenAI-compatible
@@ -96,6 +99,15 @@ def create_app() -> FastAPI:
     _register_websocket_routes(app)
     _register_dashboard_routes(app)
     _register_audit_routes(app)
+    
+    # Include chat API router
+    app.include_router(chat_router)
+    
+    # Include RAG API router
+    app.include_router(rag_router)
+    
+    # Include MCP/Tools API router
+    app.include_router(mcp_router)
     
     return app
 
@@ -942,6 +954,12 @@ def _register_dashboard_routes(app: FastAPI):
     async def dashboard():
         """Serve the monitoring dashboard."""
         return _get_dashboard_html()
+    
+    @app.get("/chat", response_class=HTMLResponse, tags=["Dashboard"])
+    async def enhanced_playground():
+        """Serve the enhanced chat playground."""
+        from zse.api.server.playground_ui import get_enhanced_playground_html
+        return get_enhanced_playground_html()
 
 
 def _get_dashboard_html() -> str:
