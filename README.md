@@ -51,15 +51,19 @@ zse serve qwen-7b.zse
 ## Installation
 
 ```bash
-# Clone and install (PyPI coming soon)
-git clone https://github.com/Zyora-Dev/zse.git
-cd zse
-pip install -e ".[dev]"
+pip install zllm-zse
 ```
 
 With CUDA support (recommended):
 ```bash
-pip install -e ".[cuda]"
+pip install zllm-zse[cuda]
+```
+
+From source:
+```bash
+git clone https://github.com/Zyora-Dev/zse.git
+cd zse
+pip install -e ".[dev]"
 ```
 
 ## Quick Start
