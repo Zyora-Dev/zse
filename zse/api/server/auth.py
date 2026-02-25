@@ -297,6 +297,18 @@ async def verify_api_key(
     if not manager.is_enabled():
         return None
     
+    # Skip auth for internal UI routes (served by same server)
+    path = request.url.path
+    internal_routes = [
+        "/dashboard", "/chat", "/docs", "/openapi.json", "/redoc",
+        "/health", "/ws/", "/favicon.ico",
+        "/api/chat/", "/api/rag/", "/api/tools/",  # Playground APIs
+        "/api/stats", "/api/analytics", "/api/models",  # Dashboard APIs
+        "/v1/models",  # Model selector in UI
+    ]
+    if any(path.startswith(route) or path == route.rstrip('/') for route in internal_routes):
+        return None
+    
     # Try to get key from various sources
     key = None
     

@@ -540,13 +540,17 @@ def _run_server(
                     progress.update(task, description="[green]Model loaded!")
                     
                     # Register with server state
-                    from zse.api.server.state import LoadedModel
-                    server_state.add_model(LoadedModel(
-                        name=model,
-                        path=model,
-                        loaded_at=time.time(),
-                        orchestrator=orchestrator,
-                    ))
+                    import psutil
+                    process = psutil.Process()
+                    memory_used = process.memory_info().rss / (1024**3)  # RSS in GB
+                    model_id = server_state.generate_model_id(model)
+                    server_state.add_model(
+                        model_id=model_id,
+                        model_name=model,
+                        quantization=orchestrator.quantization,
+                        vram_used_gb=memory_used,
+                        orchestrator=orchestrator
+                    )
                     
                 except Exception as e:
                     progress.update(task, description=f"[yellow]Model load deferred: {e}")

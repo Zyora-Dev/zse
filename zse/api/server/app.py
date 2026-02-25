@@ -881,6 +881,7 @@ def _register_websocket_routes(app: FastAPI):
                 messages = data.get("messages", [])
                 max_tokens = data.get("max_tokens", 512)
                 temperature = data.get("temperature", 0.7)
+                top_p = data.get("top_p", 0.9)
                 
                 model = server_state.get_model_by_name(model_name)
                 if not model:
@@ -896,26 +897,48 @@ def _register_websocket_routes(app: FastAPI):
                     for m in messages
                 ])
                 
-                # Generate
+                # Generate synchronously (simple approach)
+                start_time = time.time()
                 full_response = ""
-                for text_chunk in model.orchestrator.generate(
-                    prompt,
-                    max_tokens=max_tokens,
-                    temperature=temperature
-                ):
-                    full_response += text_chunk
-                    await websocket.send_json({
-                        "type": "token",
-                        "content": text_chunk
-                    })
+                total_tokens = 0
                 
-                await websocket.send_json({
-                    "type": "done",
-                    "full_response": full_response
-                })
+                try:
+                    for text_chunk in model.orchestrator.generate(
+                        prompt,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        top_p=top_p
+                    ):
+                        full_response += text_chunk
+                        total_tokens += 1
+                        await websocket.send_json({
+                            "type": "token",
+                            "content": text_chunk
+                        })
+                    
+                    latency = (time.time() - start_time) * 1000
+                    await websocket.send_json({
+                        "type": "done",
+                        "full_response": full_response,
+                        "tokens": total_tokens,
+                        "latency_ms": round(latency, 2)
+                    })
+                except Exception as e:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": str(e)
+                    })
                 
         except WebSocketDisconnect:
             pass
+        except Exception as e:
+            try:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"Server error: {str(e)}"
+                })
+            except:
+                pass
     
     @app.websocket("/ws/stats")
     async def websocket_stats(websocket: WebSocket):
