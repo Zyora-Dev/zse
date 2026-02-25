@@ -35,16 +35,18 @@ zse convert Qwen/Qwen2.5-Coder-7B-Instruct -o qwen-7b.zse
 zse serve qwen-7b.zse
 ```
 
-> **Note:** Results measured on A100-80GB with NVMe storage (Feb 2025). On consumer SSDs expect 5-10s; HDDs may be slower. Any modern SSD achieves sub-10s cold starts.
+> **Note:** Results measured on A100-80GB with NVMe storage (Feb 2026). On consumer SSDs expect 5-10s; HDDs may be slower. Any modern SSD achieves sub-10s cold starts.
 
 ## Memory Benchmarks (Verified, A100-80GB)
 
 | Model | FP16 | INT4/NF4 | Reduction | Throughput |
 |-------|------|----------|----------|------------|
 | Qwen 7B | 14.2 GB | **5.2 GB** | 63% ✅ | 12-15 tok/s |
-| Qwen 32B | ~64 GB | **19.3 GB** | 70% ✅ | 7.9 tok/s |
+| Qwen 32B | ~64 GB | **19.3 GB** (NF4) / ~35 GB (.zse) | 70% ✅ | 7.9 tok/s |
 | 14B | ~28 GB | *~7 GB* | ⏳ est | - |
 | 70B | ~140 GB | *~24 GB* | ⏳ est | - |
+
+> **32B note:** Use NF4 (19.3 GB) on GPUs with <36 GB VRAM. Use `.zse` (35 GB, 5.6× faster start) on 40 GB+ GPUs.
 
 ## Installation
 
