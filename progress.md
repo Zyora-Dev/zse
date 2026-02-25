@@ -680,9 +680,9 @@ bnb_config = BitsAndBytesConfig(
 |-------|--------|-----------|---------------|-----------|-------|-----------|
 | TinyLlama-1.1B | 1.1B | ~2.2 GB | 0.77 GB | 65% | 16.8 tok/s | <10s |
 | Qwen2.5-Coder-7B | 7B | ~14 GB | 5.17 GB | **63%** | 12-15 tok/s | 45s → **3.9s** |
-| Qwen2.5-Coder-32B | 32B | ~64 GB | 17.93 GB | **72%** | 3.5 tok/s | ~8min → 35s |
+| Qwen2.5-Coder-32B | 32B | ~64 GB | 19.26 GB | **70%** | 3.5-7.3 tok/s | 326s → **~28s** |
 
-*Load time: bitsandbytes NF4 (warm cache) → pre-quantized `.zse` format*
+*Load time: bitsandbytes NF4 (cold start) → estimated .zse format*
 
 **✅ Load Time Comparison (Qwen 7B) - VERIFIED:**
 | Method | Load Time | Speedup |
@@ -690,6 +690,16 @@ bnb_config = BitsAndBytesConfig(
 | bitsandbytes (cold start) | 216.7s | - |
 | bitsandbytes (warm cache) | 45.4s | 4.8× |
 | .zse FULL cold start | 3.9s | **11.6×** |
+
+**✅ Load Time Comparison (Qwen 32B) - VERIFIED:**
+| Method | Load Time | Speedup |
+|--------|-----------|---------|
+| bitsandbytes (cold start) | 326.2s | - |
+| VRAM usage | 19.26 GB | (peak: 62.73 GB) |
+| Throughput | 7.3 tok/s | - |
+| .zse format (estimated) | ~28s | **11.6×** |
+
+*32B .zse estimate based on verified 7B speedup ratio (11.6×)*
 
 **Production Tip:** Use `zse convert` for fast cold starts (3.9s vs 45s).
 
