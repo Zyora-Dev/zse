@@ -39,31 +39,27 @@ zse serve qwen-7b.zse
 
 > **Note:** Results measured on A100-80GB with NVMe storage (Feb 2025). On consumer SSDs expect 5-10s; HDDs may be slower. Any modern SSD achieves sub-10s cold starts.
 
-## Memory Targets
+## Memory Benchmarks (Verified, A100-80GB)
 
-| Model Size | Standard FP16 | ZSE Target | Reduction |
-|------------|---------------|------------|-----------|
-| 7B | 14+ GB | **3 - 3.5 GB** | ~75% |
-| 14B | 28+ GB | **6 GB** | ~78% |
-| 32B | 64+ GB | **16 - 20 GB** | ~70% |
-| 70B | 140+ GB | **24 - 32 GB** | ~77% |
+| Model | FP16 | INT4/NF4 | Reduction |
+|-------|------|----------|----------|
+| Qwen 7B | 14.2 GB | **5.2 GB** | 63% ✅ |
+| Qwen 32B | ~64 GB | **17.9 GB** | 72% ✅ |
+| 14B | ~28 GB | *~7 GB* | ⏳ estimated |
+| 70B | ~140 GB | *~24 GB* | ⏳ estimated |
 
 ## Installation
 
 ```bash
-pip install zse
+# Clone and install (PyPI coming soon)
+git clone https://github.com/Zyora-Dev/zse.git
+cd zse
+pip install -e ".[dev]"
 ```
 
 With CUDA support (recommended):
 ```bash
-pip install zse[cuda]
-```
-
-For development:
-```bash
-git clone https://github.com/zse-team/zse.git
-cd zse
-pip install -e ".[dev]"
+pip install -e ".[cuda]"
 ```
 
 ## Quick Start
@@ -163,7 +159,7 @@ zse serve model --mode dev
 zse serve model --config configs/enterprise.yaml
 ```
 
-- Authentication (API key, OAuth2, SSO)
+- API key authentication
 - PostgreSQL + Redis
 - Prometheus metrics
 - Rate limiting
