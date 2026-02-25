@@ -1276,6 +1276,110 @@ docker-compose --profile gpu up -d      # GPU
 
 ---
 
+### Phase 5: Enhanced Playground + RAG + MCP ✅ COMPLETE
+
+**Date: 2026-02-25**
+
+Production-ready playground with persistence, RAG for document context, and MCP for tool integrations.
+
+#### Phase 5A: Enhanced Playground ✅
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| SQLite chat history | ✅ Done | `chat_store.py` - persistent conversations |
+| Beautiful chat UI | ✅ Done | `playground_ui.py` - bubbles, markdown, code highlighting |
+| Conversation sidebar | ✅ Done | Multi-conversation management |
+| System prompt | ✅ Done | Customizable system instructions |
+| Parameters panel | ✅ Done | Temperature, top_p, max_tokens sliders |
+| Streaming responses | ✅ Done | WebSocket real-time token display |
+| Export conversations | ✅ Done | JSON and Markdown export |
+
+**New Files:**
+- `zse/api/server/chat_store.py` - SQLite chat persistence
+- `zse/api/server/chat_routes.py` - Chat REST API
+- `zse/api/server/playground_ui.py` - Enhanced chat UI
+
+**New Endpoints:**
+- `GET /chat` - Enhanced playground UI
+- `POST /api/chat/conversations` - Create conversation
+- `GET /api/chat/conversations` - List conversations
+- `PATCH /api/chat/conversations/{id}` - Update conversation
+- `DELETE /api/chat/conversations/{id}` - Delete conversation
+- `POST /api/chat/conversations/{id}/messages` - Add message
+- `GET /api/chat/conversations/{id}/messages` - Get messages
+- `GET /api/chat/conversations/{id}/export` - Export conversation
+
+#### Phase 5B: RAG Module ✅
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Document upload | ✅ Done | PDF, TXT, MD support |
+| Text chunking | ✅ Done | Smart chunking with overlap |
+| Embedding generation | ✅ Done | TF-IDF or sentence-transformers |
+| Vector store | ✅ Done | SQLite + NumPy embeddings |
+| Context retrieval | ✅ Done | Semantic search, top-k |
+| Source citations | ✅ Done | Document sources in results |
+
+**New Files:**
+- `zse/api/server/rag.py` - RAG storage and search
+- `zse/api/server/rag_routes.py` - RAG REST API
+
+**New Endpoints:**
+- `POST /api/rag/documents` - Add document by content
+- `POST /api/rag/documents/upload` - Upload document file
+- `GET /api/rag/documents` - List documents
+- `DELETE /api/rag/documents/{id}` - Delete document
+- `POST /api/rag/search` - Search documents
+- `POST /api/rag/context` - Get context for chat injection
+
+#### Phase 5C: MCP Support ✅
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Tool definitions | ✅ Done | JSON schema tools |
+| Function calling | ✅ Done | Parse and execute tools |
+| Built-in tools | ✅ Done | calculator, datetime, parse_json, string_ops |
+| OpenAI format | ✅ Done | Compatible tool definitions |
+
+**New Files:**
+- `zse/api/server/mcp.py` - Tool registry and execution
+- `zse/api/server/mcp_routes.py` - Tools REST API
+
+**New Endpoints:**
+- `GET /api/tools/` - List all tools
+- `POST /api/tools/execute` - Execute a tool
+- `POST /api/tools/parse` - Parse tool calls from text
+- `POST /api/tools/process` - Parse and execute tool calls
+- `GET /api/tools/openai/functions` - Get OpenAI-compatible format
+
+**Built-in Tools:**
+| Tool | Description |
+|------|-------------|
+| `calculator` | Math expressions (sqrt, sin, cos, log, etc.) |
+| `datetime` | Current date/time, timezone support |
+| `parse_json` | Parse JSON and extract data |
+| `string_ops` | String operations (upper, lower, split, etc.) |
+
+#### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  ZSE Server (/dashboard)                                    │
+│  ├── Enhanced Playground (chat UI)                          │
+│  │   ├── SQLite: conversations, messages                    │
+│  │   └── WebSocket: streaming responses                     │
+│  ├── RAG Module                                             │
+│  │   ├── Documents API: upload, list, delete                │
+│  │   ├── Embeddings: generate & store                       │
+│  │   └── Context: inject relevant chunks                    │
+│  └── MCP Module                                             │
+│      ├── Tools: define, list, execute                       │
+│      └── Function calling: parse & route                    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## Blockers & Questions
 
 *None - All planned features complete!*
