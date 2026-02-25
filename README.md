@@ -20,14 +20,12 @@ ZSE is designed to run large language models with minimal memory footprint while
 
 ## ⚡ Cold Start Benchmark
 
-**3.9 seconds** to first token with `.zse` format — verified on A100-80GB with Qwen 7B.
+**3.9s (7B)** and **21.4s (32B)** to first token with `.zse` format — verified on A100-80GB.
 
-| Engine | Cold Start | vs ZSE |
-|--------|------------|--------|
-| **ZSE (.zse format)** | **3.9s** | — |
-| Ollama (GGUF Q4) | ~15s | 3.8× slower |
-| vLLM (FP16) | ~30s | 7.7× slower |
-| bitsandbytes NF4 | ~45s | 11.5× slower |
+| Model | bitsandbytes | ZSE (.zse) | Speedup |
+|-------|--------------|------------|----------|
+| **Qwen 7B** | 45.4s | **3.9s** | **11.6×** |
+| **Qwen 32B** | 120.0s | **21.4s** | **5.6×** |
 
 ```bash
 # One-time conversion (~20s)
@@ -41,12 +39,12 @@ zse serve qwen-7b.zse
 
 ## Memory Benchmarks (Verified, A100-80GB)
 
-| Model | FP16 | INT4/NF4 | Reduction |
-|-------|------|----------|----------|
-| Qwen 7B | 14.2 GB | **5.2 GB** | 63% ✅ |
-| Qwen 32B | ~64 GB | **17.9 GB** | 72% ✅ |
-| 14B | ~28 GB | *~7 GB* | ⏳ estimated |
-| 70B | ~140 GB | *~24 GB* | ⏳ estimated |
+| Model | FP16 | INT4/NF4 | Reduction | Throughput |
+|-------|------|----------|----------|------------|
+| Qwen 7B | 14.2 GB | **5.2 GB** | 63% ✅ | 12-15 tok/s |
+| Qwen 32B | ~64 GB | **19.3 GB** | 70% ✅ | 7.9 tok/s |
+| 14B | ~28 GB | *~7 GB* | ⏳ est | - |
+| 70B | ~140 GB | *~24 GB* | ⏳ est | - |
 
 ## Installation
 

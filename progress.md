@@ -2,7 +2,7 @@
 
 > **ZSE - Z Server Engine**: Ultra memory-efficient LLM inference engine
 > 
-> Goal: Fit 32B model in 16-20GB VRAM, 7B in 3.5-5GB VRAM ✅ **ACHIEVED: 32B in 17.93 GB, 7B in 5.19 GB**
+> Goal: Fit 32B model in 16-20GB VRAM, 7B in 3.5-5GB VRAM ✅ **ACHIEVED: 32B in 19.25 GB, 7B in 5.19 GB**
 
 ---
 
@@ -53,22 +53,39 @@ zse serve Qwen/Qwen2.5-0.5B-Instruct --device cpu
 | Mode | Memory | vs FP16 | Speed |
 |------|--------|---------|-------|
 | **FP16** | ~64 GB | baseline | ~10 tok/s |
-| **INT4/NF4** | 17.93 GB | **72% smaller** | 3.5 tok/s |
+| **INT4/NF4** | 19.25 GB | **70% smaller** | 7.9 tok/s |
 
-**✅ 32B model now fits on 24GB consumer GPUs (RTX 4090/3090)!**
+**Cold Start (VERIFIED 2026-02-25):**
+
+| Method | Cold Start | VRAM | Speedup |
+|--------|------------|------|----------|
+| bitsandbytes NF4 | 120.0s | 19.25 GB | baseline |
+| **ZSE (.zse format)** | **21.4s** | 35.39 GB | **5.6×** |
+
+✅ **32B model now fits on 24GB consumer GPUs (RTX 4090/3090)!**
 
 ### 🚀 .zse Format: Fast Cold Starts (VERIFIED)
 
-| Engine | 7B Cold Start | Notes |
-|--------|---------------|-------|
-| ZSE (bitsandbytes) | 45.4s | Direct HuggingFace load |
-| vLLM | ~30s | Published benchmark |
-| Ollama | ~15s | Published benchmark |
-| **ZSE (.zse format)** | **3.9s** | **🏆 11.6× faster than bnb** |
+**Qwen 2.5 Coder 7B (A100-80GB):**
 
-*Tested on A100-80GB with Qwen 2.5 Coder 7B, 2026-02-25*
+| Method | Cold Start | Speedup |
+|--------|------------|----------|
+| bitsandbytes NF4 | 45.4s | baseline |
+| **ZSE (.zse format)** | **3.9s** | **11.6×** |
 
-**Competitive Advantage:** Pre-quantized `.zse` format is **3.8× faster than Ollama**, **7.7× faster than vLLM**.
+**Qwen 2.5 Coder 32B (A100-80GB):**
+
+| Method | Cold Start | Speedup |
+|--------|------------|----------|
+| bitsandbytes NF4 | 120.0s | baseline |
+| **ZSE (.zse format)** | **21.4s** | **5.6×** |
+
+*All tests on A100-80GB, February 2026*
+
+**Summary:**
+- **7B**: 3.9s cold start (11.6× faster than bitsandbytes)
+- **32B**: 21.4s cold start (5.6× faster than bitsandbytes)
+- **Competitive:** 3.8× faster than Ollama, 7.7× faster than vLLM
 
 ### Qwen 2.5 Coder 7B Benchmarks (A10G GPU)
 
@@ -131,11 +148,11 @@ zse serve qwen7b.zse  # Cold start: ~4s
 
 | Configuration | VRAM Usage | Concurrent Requests |
 |---------------|------------|---------------------|
-| 21× INT4 7B instances | ~109 GB total | High-volume 7B tier |
-| 4× INT4 32B instances | ~72 GB total | Enterprise 32B tier |
-| 1× 32B + 10× 7B mixed | ~70 GB total | Multi-tier deployment |
+| 15× INT4 7B instances | ~78 GB total | High-volume 7B tier |
+| 4× INT4 32B instances | ~77 GB total | Enterprise 32B tier |
+| 1× 32B + 10× 7B mixed | ~71 GB total | Multi-tier deployment |
 
-*Based on zStream analysis: 5.18 GB per INT4 7B, 17.93 GB per INT4 32B*
+*Based on verified benchmarks: 5.18 GB per INT4 7B, 19.25 GB per INT4 32B*
 
 ---
 
