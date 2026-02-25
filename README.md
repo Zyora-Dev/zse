@@ -192,7 +192,7 @@ zse/
 GGUF models are supported via llama.cpp backend:
 
 ```bash
-pip install zse[gguf]
+pip install zllm-zse[gguf]
 zse serve ./model.gguf
 ```
 
