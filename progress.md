@@ -62,7 +62,7 @@ zse serve Qwen/Qwen2.5-0.5B-Instruct --device cpu
 | bitsandbytes NF4 | 120.0s | 19.25 GB | baseline |
 | **ZSE (.zse format)** | **21.4s** | 35.39 GB | **5.6×** |
 
-✅ **32B model now fits on 24GB consumer GPUs (RTX 4090/3090)!**
+> **32B note:** Use NF4 (19.3 GB) on GPUs with <36 GB VRAM. Use `.zse` (35 GB, 5.6× faster start) on 40 GB+ GPUs.
 
 ### 🚀 .zse Format: Fast Cold Starts (VERIFIED)
 
