@@ -6,6 +6,17 @@
 
 ---
 
+## 📦 PyPI Release (February 2026)
+
+```bash
+pip install zllm-zse
+pip install zllm-zse[cuda]  # with CUDA support
+```
+
+**Package:** [pypi.org/project/zllm-zse](https://pypi.org/project/zllm-zse/)
+
+---
+
 ## Project Vision
 
 - **Powerful**: Custom CUDA kernels for maximum performance

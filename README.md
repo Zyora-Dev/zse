@@ -1,5 +1,6 @@
 # ZSE - Z Server Engine
 
+[![PyPI](https://img.shields.io/pypi/v/zllm-zse.svg)](https://pypi.org/project/zllm-zse/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
 [![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template?repo=https://github.com/Zyora-Dev/zse)
