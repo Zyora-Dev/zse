@@ -1,10 +1,22 @@
-# ZSE - Z Server Engine
+<p align="center">
+  <a href="https://zllm.in">
+    <img src="https://zllm.in/_next/image?url=%2Fimages%2Fzllm-logo.png&w=256&q=75" alt="ZLLM Logo" width="128">
+  </a>
+</p>
 
-[![PyPI](https://img.shields.io/pypi/v/zllm-zse.svg)](https://pypi.org/project/zllm-zse/)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template?repo=https://github.com/Zyora-Dev/zse)
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Zyora-Dev/zse)
+<h1 align="center">ZSE - Z Server Engine</h1>
+
+<p align="center">
+  <a href="https://pypi.org/project/zllm-zse/"><img src="https://img.shields.io/pypi/v/zllm-zse.svg" alt="PyPI"></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python 3.11+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="License"></a>
+  <a href="https://zllm.in"><img src="https://img.shields.io/badge/website-zllm.in-blue" alt="Website"></a>
+</p>
+
+<p align="center">
+  <a href="https://railway.app/template?repo=https://github.com/Zyora-Dev/zse"><img src="https://railway.app/button.svg" alt="Deploy on Railway"></a>
+  <a href="https://render.com/deploy?repo=https://github.com/Zyora-Dev/zse"><img src="https://render.com/images/deploy-to-render-button.svg" alt="Deploy to Render"></a>
+</p>
 
 **Ultra memory-efficient LLM inference engine with native INT4 CUDA kernels.**
 
@@ -195,3 +207,15 @@ See [deploy/DEPLOY.md](deploy/DEPLOY.md) for full deployment guide including Run
 ## License
 
 Apache 2.0
+
+## Contact
+
+- **Website:** [zllm.in](https://zllm.in)
+- **Company:** [Zyora Labs](https://zyoralabs.com)
+- **Email:** [zse@zyoralabs.com](mailto:zse@zyoralabs.com)
+
+---
+
+<p align="center">
+  Made with ❤️ by <a href="https://zyoralabs.com">Zyora Labs</a>
+</p>
