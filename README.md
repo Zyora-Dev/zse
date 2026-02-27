@@ -21,12 +21,21 @@ ZSE is designed to run large language models with minimal memory footprint while
 
 ## ⚡ Cold Start Benchmark
 
-**3.9s (7B)** and **21.4s (32B)** to first token with `.zse` format — verified on A100-80GB.
+**6.5s (72B)** — 79× faster than bitsandbytes, verified on H200 (150GB VRAM).
 
 | Model | bitsandbytes | ZSE (.zse) | Speedup |
 |-------|--------------|------------|----------|
 | **Qwen 7B** | 45.4s | **3.9s** | **11.6×** |
 | **Qwen 32B** | 120.0s | **21.4s** | **5.6×** |
+| **Qwen 72B** | 512.7s | **6.5s** | **79×** |
+
+### ZSE vs llama.cpp (72B)
+
+| Format | Cold Start | VRAM |
+|--------|-----------|------|
+| bitsandbytes | 512.7s | 139.1 GB |
+| llama.cpp GGUF | 10.2s | 36.3 GB |
+| **ZSE (.zse)** | **6.5s** | 76.6 GB |
 
 ```bash
 # One-time conversion (~20s)
@@ -36,7 +45,7 @@ zse convert Qwen/Qwen2.5-Coder-7B-Instruct -o qwen-7b.zse
 zse serve qwen-7b.zse
 ```
 
-> **Note:** Results measured on A100-80GB with NVMe storage (Feb 2026). On consumer SSDs expect 5-10s; HDDs may be slower. Any modern SSD achieves sub-10s cold starts.
+> **Note:** 72B results on NVIDIA H200 (150GB). 7B/32B on A100-80GB. Any modern SSD achieves sub-10s cold starts.
 
 ## Memory Benchmarks (Verified, A100-80GB)
 
