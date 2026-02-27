@@ -925,112 +925,49 @@ def convert(
         console.print(f"[bold]Target Memory:[/bold] [cyan]{target_memory}[/cyan]")
     
     try:
-        from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
+        from zse.format.writer import ZSEWriter, ConversionConfig
         import torch
-        import json
         
         output_path = Path(output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task("[cyan]Converting model...", total=100)
-            
-            # Load config
-            progress.update(task, advance=10, description="[cyan]Loading model config...")
-            config = AutoConfig.from_pretrained(source, trust_remote_code=True)
-            
-            # Load tokenizer
-            progress.update(task, advance=10, description="[cyan]Loading tokenizer...")
-            tokenizer = AutoTokenizer.from_pretrained(source, trust_remote_code=True)
-            
-            # Determine target dtype
-            progress.update(task, advance=10, description="[cyan]Loading model...")
-            
-            if quantization == "fp16":
-                dtype = torch.float16
-                model = AutoModelForCausalLM.from_pretrained(
-                    source,
-                    torch_dtype=dtype,
-                    device_map="cpu",
-                    trust_remote_code=True,
-                )
-            elif quantization in ("int8", "int4"):
-                # Use bitsandbytes for quantization
-                from transformers import BitsAndBytesConfig
-                
-                if quantization == "int8":
-                    quant_config = BitsAndBytesConfig(load_in_8bit=True)
-                else:
-                    quant_config = BitsAndBytesConfig(
-                        load_in_4bit=True,
-                        bnb_4bit_compute_dtype=torch.float16,
-                        bnb_4bit_use_double_quant=True,
-                        bnb_4bit_quant_type="nf4",
-                    )
-                
-                model = AutoModelForCausalLM.from_pretrained(
-                    source,
-                    quantization_config=quant_config,
-                    device_map="cpu",
-                    trust_remote_code=True,
-                )
-            else:
-                # Default FP16
-                model = AutoModelForCausalLM.from_pretrained(
-                    source,
-                    torch_dtype=torch.float16,
-                    device_map="cpu",
-                    trust_remote_code=True,
-                )
-            
-            progress.update(task, advance=30, description="[cyan]Saving model...")
-            
-            # Save in ZSE format (directory structure)
-            zse_dir = output_path.with_suffix("")
-            zse_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Save model
-            model.save_pretrained(zse_dir / "model", safe_serialization=True)
-            
-            # Save tokenizer
-            tokenizer.save_pretrained(zse_dir / "tokenizer")
-            
-            # Save ZSE metadata
-            zse_metadata = {
-                "version": __version__,
-                "source": source,
-                "quantization": quantization,
-                "target_memory": target_memory,
-                "model_config": {
-                    "architecture": config.architectures[0] if hasattr(config, 'architectures') else "unknown",
-                    "hidden_size": getattr(config, 'hidden_size', None),
-                    "num_layers": getattr(config, 'num_hidden_layers', None),
-                    "num_heads": getattr(config, 'num_attention_heads', None),
-                    "vocab_size": getattr(config, 'vocab_size', None),
-                },
-            }
-            
-            with open(zse_dir / "zse_config.json", "w") as f:
-                json.dump(zse_metadata, f, indent=2)
-            
-            progress.update(task, completed=100, description="[green]Conversion complete!")
+        # Parse target memory if provided
+        target_gb = None
+        if target_memory:
+            target_memory = target_memory.upper().replace(" ", "")
+            if target_memory.endswith("GB"):
+                target_gb = float(target_memory[:-2])
+            elif target_memory.endswith("G"):
+                target_gb = float(target_memory[:-1])
         
-        # Calculate size
-        total_size = sum(f.stat().st_size for f in zse_dir.rglob("*") if f.is_file())
-        size_gb = total_size / (1024**3)
+        # Map quantization strings
+        quant_map = {"int4": "int4", "int8": "int8", "fp16": "none", "none": "none", "nf4": "int4"}
+        quant_setting = quant_map.get(quantization.lower(), "int4")
+        
+        # Create conversion config
+        config = ConversionConfig(
+            quantization=quant_setting,
+            compute_dtype=torch.float16,
+            include_tokenizer=True,
+            target_memory_gb=target_gb,
+        )
+        
+        # Use the real ZSEWriter for binary .zse format
+        writer = ZSEWriter(output_path, config)
+        
+        console.print("[cyan]Converting to binary .zse format...[/cyan]")
+        result_path = writer.convert_from_hf(source, trust_remote_code=True)
+        
+        # Get file size
+        size_gb = result_path.stat().st_size / (1024**3)
         
         console.print(Panel.fit(
             f"[bold green]✅ Conversion Complete![/bold green]\n\n"
-            f"[bold]Output:[/bold] {zse_dir}\n"
+            f"[bold]Output:[/bold] {result_path}\n"
             f"[bold]Size:[/bold] {size_gb:.2f} GB\n"
-            f"[bold]Quantization:[/bold] {quantization.upper()}\n\n"
-            f"[dim]Load with: zse serve {zse_dir}[/dim]",
+            f"[bold]Quantization:[/bold] {quantization.upper()}\n"
+            f"[bold]Format:[/bold] Binary .zse (single file)\n\n"
+            f"[dim]Load with: zse serve {result_path}[/dim]",
             title="[bold blue]🎉 Success[/bold blue]",
             border_style="green",
         ))

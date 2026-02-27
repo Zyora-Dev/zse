@@ -26,6 +26,7 @@ import torch.nn as nn
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Dict, Any, Iterator, Union
+from pathlib import Path
 import gc
 import time
 
@@ -368,10 +369,56 @@ class IntelligenceOrchestrator:
         # Load tokenizer
         if verbose:
             print("📥 Loading tokenizer...")
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            self.model_name,
-            trust_remote_code=True,
-        )
+        
+        # Check if model_name is a local .zse file/directory
+        model_path = Path(self.model_name)
+        self._is_zse_format = False  # Track if loading from .zse
+        self._zse_path = None
+        
+        if model_path.exists():
+            # Local path - check for tokenizer files
+            if model_path.is_dir():
+                tokenizer_config = model_path / "tokenizer_config.json"
+                if tokenizer_config.exists():
+                    # Load tokenizer from local directory
+                    self.tokenizer = AutoTokenizer.from_pretrained(
+                        str(model_path),
+                        trust_remote_code=True,
+                    )
+                    # Check if this is a converted .zse directory (has model.safetensors)
+                    if (model_path / "model.safetensors").exists() or (model_path / "model.zse").exists():
+                        self._is_zse_format = True
+                        self._zse_path = model_path
+                else:
+                    # Check if it's a .zse binary file with embedded tokenizer
+                    zse_file = model_path / "model.zse"
+                    if zse_file.exists():
+                        from zse.format.reader import ZSEReader
+                        reader = ZSEReader(zse_file)
+                        self.tokenizer = reader.load_tokenizer()
+                        self._is_zse_format = True
+                        self._zse_path = zse_file
+                    else:
+                        raise ValueError(f"No tokenizer found in {model_path}. Directory must contain tokenizer_config.json or model.zse")
+            elif model_path.suffix == ".zse" or str(model_path).endswith(".zse"):
+                # Single .zse binary file
+                from zse.format.reader import ZSEReader
+                reader = ZSEReader(model_path)
+                self.tokenizer = reader.load_tokenizer()
+                self._is_zse_format = True
+                self._zse_path = model_path
+            else:
+                # Try loading as HuggingFace local path
+                self.tokenizer = AutoTokenizer.from_pretrained(
+                    str(model_path),
+                    trust_remote_code=True,
+                )
+        else:
+            # HuggingFace model ID
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name,
+                trust_remote_code=True,
+            )
         
         # Determine device_map for model loading
         if self._is_cpu:
@@ -399,11 +446,60 @@ class IntelligenceOrchestrator:
                 mode = f"CPU {self.quantization.upper()}"
             elif self._multi_gpu:
                 mode = "Multi-GPU"
+            elif self._is_zse_format:
+                mode = "ZSE Format (Pre-quantized)"
             else:
                 mode = self.quantization.upper()
             print(f"📥 Loading model ({mode})...")
         
-        if self.quantization in ("fp32", "fp16") or self._is_cpu:
+        # Special fast path for .zse format
+        if self._is_zse_format and self._zse_path is not None:
+            # Load from pre-converted .zse format (memory-mapped, fast)
+            from safetensors.torch import load_file
+            
+            zse_path = Path(self._zse_path)
+            
+            if zse_path.is_dir():
+                # Directory format - load safetensors directly
+                safetensors_file = zse_path / "model.safetensors"
+                if safetensors_file.exists():
+                    # Get config for model architecture
+                    config_file = zse_path / "config.json"
+                    if config_file.exists():
+                        from transformers import AutoConfig
+                        model_config = AutoConfig.from_pretrained(str(zse_path), trust_remote_code=True)
+                        
+                        # Create model structure
+                        with torch.device("meta"):
+                            self.model = AutoModelForCausalLM.from_config(model_config, trust_remote_code=True)
+                        
+                        # Load weights with memory mapping
+                        state_dict = load_file(str(safetensors_file), device=self.device)
+                        self.model.load_state_dict(state_dict, assign=True, strict=False)
+                    else:
+                        # Fall back to standard loading
+                        self.model = AutoModelForCausalLM.from_pretrained(
+                            str(zse_path),
+                            torch_dtype=torch.float16,
+                            device_map=device_map,
+                            trust_remote_code=True,
+                            low_cpu_mem_usage=True,
+                        )
+                else:
+                    # No safetensors, use standard loading
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        str(zse_path),
+                        torch_dtype=torch.float16,
+                        device_map=device_map,
+                        trust_remote_code=True,
+                        low_cpu_mem_usage=True,
+                    )
+            else:
+                # Binary .zse file - use reader
+                from zse.format.reader_v2 import load_zse_model
+                self.model, _, _ = load_zse_model(str(zse_path), device=self.device)
+        
+        elif self.quantization in ("fp32", "fp16") or self._is_cpu:
             # Direct loading (CPU uses FP32, GPU can use FP16)
             dtype = torch.float32 if (self.quantization == "fp32" or self._is_cpu) else torch.float16
             self.model = AutoModelForCausalLM.from_pretrained(

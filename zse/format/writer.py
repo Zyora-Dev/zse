@@ -48,6 +48,75 @@ class ConversionConfig:
     target_memory_gb: Optional[float] = None  # Auto-select quant if set
 
 
+def quantize_to_int4(
+    weight: torch.Tensor,
+    group_size: int = 128,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Quantize FP16 weight to INT4 with absmax scaling.
+    
+    Args:
+        weight: [out_features, in_features] FP16 tensor
+        group_size: quantization group size
+        
+    Returns:
+        (packed_int4, scales)
+        - packed_int4: [out_features, in_features//2] uint8
+        - scales: [out_features, num_groups] float16
+    """
+    out_features, in_features = weight.shape
+    
+    # Pad in_features to be divisible by group_size
+    if in_features % group_size != 0:
+        pad_size = group_size - (in_features % group_size)
+        weight = torch.nn.functional.pad(weight, (0, pad_size), value=0)
+        in_features = weight.shape[1]
+    
+    # Reshape for group-wise quantization
+    num_groups = in_features // group_size
+    weight_grouped = weight.view(out_features, num_groups, group_size)
+    
+    # Compute absmax scales per group
+    absmax = weight_grouped.abs().amax(dim=-1, keepdim=True).clamp(min=1e-7)
+    scales = absmax.squeeze(-1) / 7.0  # Scale to [-7, 7] range for INT4
+    
+    # Quantize to INT4 range [-7, 7]
+    weight_scaled = weight_grouped / absmax * 7.0
+    weight_int4 = weight_scaled.round().clamp(-7, 7).to(torch.int8)
+    
+    # Reshape back to [out_features, in_features]
+    weight_int4 = weight_int4.view(out_features, in_features)
+    
+    # Pack two INT4 values into one uint8
+    # Shift from [-7, 7] to [0, 15] range for packing
+    weight_uint4 = (weight_int4 + 8).to(torch.uint8)
+    
+    # Pack: even indices in low 4 bits, odd indices in high 4 bits
+    packed = torch.zeros(out_features, in_features // 2, dtype=torch.uint8, device=weight.device)
+    packed = (weight_uint4[:, 0::2] & 0x0F) | ((weight_uint4[:, 1::2] & 0x0F) << 4)
+    
+    return packed, scales.to(torch.float16)
+
+
+def quantize_to_int8(
+    weight: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Quantize FP16 weight to INT8 with per-channel absmax scaling.
+    
+    Returns:
+        (quantized_int8, scales)
+    """
+    # Per-channel absmax
+    absmax = weight.abs().amax(dim=-1, keepdim=True).clamp(min=1e-7)
+    scales = absmax / 127.0
+    
+    # Quantize
+    weight_int8 = (weight / scales).round().clamp(-127, 127).to(torch.int8)
+    
+    return weight_int8, scales.squeeze(-1).to(torch.float16)
+
+
 class ZSEWriter:
     """
     Writer for creating .zse format files.
@@ -130,44 +199,15 @@ class ZSEWriter:
         if self.config.target_memory_gb:
             self._auto_select_quantization(config)
         
-        # Load model weights (streaming if large)
-        print(f"  Loading model weights (quantization: {self.config.quantization})...")
-        
-        # Choose loading strategy based on quantization
-        if self.config.quantization == "int4":
-            from transformers import BitsAndBytesConfig
-            bnb_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=self.config.compute_dtype,
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_quant_type="nf4",
-            )
-            model = AutoModelForCausalLM.from_pretrained(
-                model_id,
-                revision=revision,
-                quantization_config=bnb_config,
-                device_map="cpu",
-                trust_remote_code=trust_remote_code,
-            )
-        elif self.config.quantization == "int8":
-            from transformers import BitsAndBytesConfig
-            bnb_config = BitsAndBytesConfig(load_in_8bit=True)
-            model = AutoModelForCausalLM.from_pretrained(
-                model_id,
-                revision=revision,
-                quantization_config=bnb_config,
-                device_map="cpu",
-                trust_remote_code=trust_remote_code,
-            )
-        else:
-            # FP16/BF16
-            model = AutoModelForCausalLM.from_pretrained(
-                model_id,
-                revision=revision,
-                torch_dtype=self.config.compute_dtype,
-                device_map="cpu",
-                trust_remote_code=trust_remote_code,
-            )
+        # Load model weights in FP16 - we apply our own quantization
+        print(f"  Loading model weights in FP16 (will quantize to: {self.config.quantization})...")
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            revision=revision,
+            torch_dtype=self.config.compute_dtype,
+            device_map="cpu",
+            trust_remote_code=trust_remote_code,
+        )
         
         # Get state dict
         state_dict = model.state_dict()
@@ -211,6 +251,17 @@ class ZSEWriter:
         revision: Optional[str],
     ) -> None:
         """Build header from HuggingFace config."""
+        # Serialize full config to JSON for offline loading
+        hf_config_json = ""
+        try:
+            hf_config_json = config.to_json_string()
+        except Exception:
+            # Fallback: try to convert config to dict
+            try:
+                hf_config_json = json.dumps(config.to_dict())
+            except Exception:
+                pass
+        
         self.header = ZSEHeader(
             version=ZSE_VERSION,
             architecture=config.architectures[0] if hasattr(config, 'architectures') and config.architectures else "unknown",
@@ -228,6 +279,7 @@ class ZSEWriter:
             quant_method=self.config.quant_method if self.config.quantization != "none" else "",
             source_model=source_model,
             source_revision=revision or "",
+            hf_config_json=hf_config_json,
         )
     
     def _serialize_tokenizer(self, tokenizer: Any) -> bytes:
@@ -286,9 +338,12 @@ class ZSEWriter:
         # Group tensors by layer
         layer_tensors, other_tensors = self._group_tensors(state_dict)
         
-        # Estimate header size: ~200 bytes per tensor + base
+        # Estimate header size: ~400 bytes per tensor + base
+        # INT4 quantization doubles tensor count (weight + scales)
         tensor_count = len(state_dict)
-        estimated_header_size = 4096 + tensor_count * 256  # Conservative estimate
+        if self.config.quantization in ("int4", "int8"):
+            tensor_count *= 2  # Account for scales tensors
+        estimated_header_size = 8192 + tensor_count * 512  # Conservative estimate
         # Round up to next 4KB boundary
         header_size = ((estimated_header_size + 4095) // 4096) * 4096
         
@@ -396,32 +451,123 @@ class ZSEWriter:
         name: str,
         tensor: torch.Tensor,
     ) -> None:
-        """Write a single tensor to file."""
+        """Write a single tensor to file, applying quantization if configured."""
         # Get tensor info
         offset = f.tell()
-        shape = tuple(tensor.shape)
-        dtype = torch_dtype_to_zse(tensor.dtype)
+        original_shape = tuple(tensor.shape)
         
-        # Convert to contiguous and get bytes
-        tensor = tensor.contiguous()
-        tensor_bytes = tensor.numpy().tobytes()
+        # Convert to contiguous CPU tensor
+        tensor = tensor.contiguous().cpu()
         
-        # Write tensor data
-        f.write(tensor_bytes)
+        # Determine if this tensor should be quantized (only linear layer weights)
+        should_quantize = (
+            self.config.quantization in ("int4", "int8") and
+            len(tensor.shape) == 2 and
+            tensor.shape[0] > 64 and tensor.shape[1] > 64 and  # Skip small tensors
+            "weight" in name and
+            not any(skip in name for skip in ["embed", "norm", "lm_head"])  # Skip embeddings and norms
+        )
         
-        # Record tensor info
-        self.header.tensors.append(TensorInfo(
-            name=name,
-            shape=shape,
-            dtype=dtype,
-            offset=offset,
-            size=len(tensor_bytes),
-            quant_type=QuantizationType.NONE,  # TODO: handle quantized tensors
-            quant_bits=0,
-            group_size=0,
-            scale_offset=0,
-            zeros_offset=0,
-        ))
+        if should_quantize and self.config.quantization == "int4":
+            # Apply INT4 quantization
+            packed, scales = quantize_to_int4(tensor, self.config.group_size)
+            
+            # Write packed weights
+            packed_bytes = packed.numpy().tobytes()
+            f.write(packed_bytes)
+            
+            # Record weight tensor info
+            self.header.tensors.append(TensorInfo(
+                name=name,
+                shape=tuple(packed.shape),  # packed shape
+                dtype=TensorDType.INT4,
+                offset=offset,
+                size=len(packed_bytes),
+                quant_type=QuantizationType.ABSMAX,
+                quant_bits=4,
+                group_size=self.config.group_size,
+                scale_offset=0,  # Updated below
+                zeros_offset=0,
+                original_shape=original_shape,  # Store original shape for dequant
+            ))
+            
+            # Write scales
+            scales_offset = f.tell()
+            scales_bytes = scales.numpy().tobytes()
+            f.write(scales_bytes)
+            
+            # Record scales tensor info
+            self.header.tensors.append(TensorInfo(
+                name=f"{name}.scales",
+                shape=tuple(scales.shape),
+                dtype=TensorDType.FLOAT16,
+                offset=scales_offset,
+                size=len(scales_bytes),
+                quant_type=QuantizationType.NONE,
+                quant_bits=0,
+                group_size=0,
+                scale_offset=0,
+                zeros_offset=0,
+            ))
+            
+        elif should_quantize and self.config.quantization == "int8":
+            # Apply INT8 quantization
+            quantized, scales = quantize_to_int8(tensor)
+            
+            # Write quantized weights
+            quant_bytes = quantized.numpy().tobytes()
+            f.write(quant_bytes)
+            
+            self.header.tensors.append(TensorInfo(
+                name=name,
+                shape=tuple(quantized.shape),
+                dtype=TensorDType.INT8,
+                offset=offset,
+                size=len(quant_bytes),
+                quant_type=QuantizationType.ABSMAX,
+                quant_bits=8,
+                group_size=0,
+                scale_offset=0,
+                zeros_offset=0,
+                original_shape=original_shape,
+            ))
+            
+            # Write scales
+            scales_offset = f.tell()
+            scales_bytes = scales.numpy().tobytes()
+            f.write(scales_bytes)
+            
+            self.header.tensors.append(TensorInfo(
+                name=f"{name}.scales",
+                shape=tuple(scales.shape),
+                dtype=TensorDType.FLOAT16,
+                offset=scales_offset,
+                size=len(scales_bytes),
+                quant_type=QuantizationType.NONE,
+                quant_bits=0,
+                group_size=0,
+                scale_offset=0,
+                zeros_offset=0,
+            ))
+            
+        else:
+            # Write as-is (FP16/FP32)
+            dtype = torch_dtype_to_zse(tensor.dtype)
+            tensor_bytes = tensor.numpy().tobytes()
+            f.write(tensor_bytes)
+            
+            self.header.tensors.append(TensorInfo(
+                name=name,
+                shape=original_shape,
+                dtype=dtype,
+                offset=offset,
+                size=len(tensor_bytes),
+                quant_type=QuantizationType.NONE,
+                quant_bits=0,
+                group_size=0,
+                scale_offset=0,
+                zeros_offset=0,
+            ))
 
 
 def convert_model(
