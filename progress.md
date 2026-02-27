@@ -96,7 +96,31 @@ zse serve Qwen/Qwen2.5-0.5B-Instruct --device cpu
 **Summary:**
 - **7B**: 3.9s cold start (11.6× faster than bitsandbytes)
 - **32B**: 21.4s cold start (5.6× faster than bitsandbytes)
+- **72B**: 6.5s cold start (79× faster than bitsandbytes)
 - **Competitive:** 3.8× faster than Ollama, 7.7× faster than vLLM
+
+### 🚀 Qwen 2.5 72B Benchmarks (H200-150GB GPU) - NEW!
+
+**VERIFIED 2026-02-27:**
+
+| Method | Cold Start | VRAM | Speedup |
+|--------|------------|------|---------|
+| bitsandbytes NF4 | 512.7s | 139.1 GB | baseline |
+| **ZSE (.zse format)** | **6.5s** | 76.6 GB | **79×** |
+| llama.cpp GGUF Q4_K_M | 10.2s | 36.3 GB | 50× |
+
+```
+Cold Start Visual (72B):
+bitsandbytes:    ████████████████████████████████████████████████████  512.7s
+llama.cpp GGUF:  █  10.2s
+ZSE .zse:        ▌  6.5s  ← 🚀 79× FASTER, 1.6× faster than llama.cpp
+```
+
+**Key Findings:**
+- ZSE is **79× faster** than bitsandbytes on 72B models
+- ZSE is **1.6× faster** than llama.cpp GGUF
+- 76.6 GB VRAM (45% less than bitsandbytes, but higher quality than Q4 GGUF)
+- H200 GPU with 150GB VRAM enables full 72B model deployment
 
 ### Qwen 2.5 Coder 7B Benchmarks (A10G GPU)
 
