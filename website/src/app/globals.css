@@ -1,0 +1,115 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 0%;
+    --foreground: 0 0% 98%;
+    --card: 0 0% 4%;
+    --card-foreground: 0 0% 98%;
+    --popover: 0 0% 4%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 85 100% 72%;
+    --primary-foreground: 0 0% 0%;
+    --secondary: 0 0% 12%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 0 0% 12%;
+    --muted-foreground: 0 0% 64%;
+    --accent: 85 100% 72%;
+    --accent-foreground: 0 0% 0%;
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 18%;
+    --input: 0 0% 18%;
+    --ring: 85 100% 72%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0a0a0a;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #222;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #333;
+}
+
+/* Thin scrollbar for sidebars */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Hide scrollbar but keep functionality */
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* Code blocks */
+pre {
+  @apply bg-[#0a0a0a] rounded-lg p-4 overflow-x-auto;
+}
+
+code {
+  @apply font-mono text-sm;
+}
+
+/* Glow effect for primary elements */
+.glow {
+  box-shadow: 0 0 20px rgba(192, 255, 113, 0.3);
+}
+
+.glow-hover:hover {
+  box-shadow: 0 0 30px rgba(192, 255, 113, 0.5);
+}
+
+/* Gradient text */
+.gradient-text {
+  @apply bg-gradient-to-r from-lime to-green-400 bg-clip-text text-transparent;
+}
+
+/* Grid pattern background */
+.grid-pattern {
+  background-image: linear-gradient(rgba(192, 255, 113, 0.03) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(192, 255, 113, 0.03) 1px, transparent 1px);
+  background-size: 50px 50px;
+}
