@@ -130,6 +130,8 @@ ZSE .zse:        ▌  6.5s  ← 🚀 79× FASTER, 1.6× faster than llama.cpp
 | **INT8** | 8.15 GB | 8.70 GB | 3.3 tok/s | **43%** |
 | **INT4** | 5.19 GB | 5.87 GB | 2.1 tok/s | **63%** |
 
+> ⚠️ **Tradeoff:** INT4 achieves 63% memory savings but at ~11% of FP16 speed on A10G. Choose INT4 when VRAM is the constraint, FP16 when speed matters.
+
 ### Qwen 2.5 Coder 7B Benchmarks (A100-80GB GPU)
 
 | Mode | VRAM Used | Peak VRAM | Speed | Load Time |
@@ -160,7 +162,7 @@ zse serve qwen7b.zse  # Cold start: ~4s
 - 28 layers @ ~108.5 MB each
 - Memory pressure: **LOW** (73.46 GB free)
 - Estimated capacity: **609 layers** could fit on GPU
-- **21× concurrent INT4 7B instances** possible on single A100-80GB
+- **~21× concurrent INT4 7B instances** *(theoretical, based on VRAM math)*
 
 **Code Generation Tests:**
 | Test | Time | Speed | Result |
@@ -181,13 +183,15 @@ zse serve qwen7b.zse  # Cold start: ~4s
 
 ### A100-80GB Capacity Planning (Inference-as-a-Service)
 
+> ⚠️ **Theoretical estimates** based on VRAM arithmetic. Real-world concurrency depends on KV cache, batch size, and memory fragmentation. Not yet verified with concurrent load testing.
+
 | Configuration | VRAM Usage | Concurrent Requests |
 |---------------|------------|---------------------|
 | 15× INT4 7B instances | ~78 GB total | High-volume 7B tier |
 | 4× INT4 32B instances | ~77 GB total | Enterprise 32B tier |
 | 1× 32B + 10× 7B mixed | ~71 GB total | Multi-tier deployment |
 
-*Based on verified benchmarks: 5.18 GB per INT4 7B, 19.25 GB per INT4 32B*
+*Based on verified per-instance benchmarks: 5.18 GB per INT4 7B, 19.25 GB per INT4 32B*
 
 ---
 
