@@ -3,60 +3,36 @@
 [![PyPI](https://img.shields.io/pypi/v/zllm-zse.svg)](https://pypi.org/project/zllm-zse/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template?repo=https://github.com/Zyora-Dev/zse)
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Zyora-Dev/zse)
 
-**Ultra memory-efficient LLM inference engine.**
+**Ultra memory-efficient LLM inference engine with native INT4 CUDA kernels.**
 
-ZSE is designed to run large language models with minimal memory footprint while maintaining high performance. Our key innovation is the **Intelligence Orchestrator** that provides smart recommendations based on your available (not total) memory.
+Run 32B models on 24GB GPUs. Run 7B models on 8GB GPUs. Fast cold starts, single-file deployment.
+
+## 🚀 Benchmarks (Verified, February 2026)
+
+| Model | File Size | VRAM | Speed | Load Time | GPU |
+|-------|-----------|------|-------|-----------|-----|
+| **Qwen 7B** | 5.57 GB | **5.9 GB** | **58.7 tok/s** | 9.1s | H200 |
+| **Qwen 32B** | 19.23 GB | **20.9 GB** | **26.9 tok/s** | 24.1s | H200 |
+
+### GPU Compatibility
+
+| GPU | VRAM | Max Model | Expected Speed |
+|-----|------|-----------|----------------|
+| RTX 3070/4070 | 8GB | 7B | ~50-60 tok/s |
+| RTX 3080/4080 | 12-16GB | 7B | ~50-60 tok/s |
+| RTX 3090/4090 | 24GB | **32B** | ~25-30 tok/s |
+| A100-40GB | 40GB | 32B | ~25-30 tok/s |
+| A100-80GB / H200 | 80-141GB | 72B | TBD |
 
 ## Key Features
 
-- 🧠 **zAttention**: Custom CUDA kernels for paged, flash, and sparse attention
-- 🗜️ **zQuantize**: Per-tensor INT2-8 mixed precision quantization
-- 💾 **zKV**: Quantized KV cache with sliding precision (4x memory savings)
-- 🌊 **zStream**: Layer streaming with async prefetch (run 70B on 24GB GPU)
-- 🎯 **zOrchestrator**: Smart recommendations based on FREE memory
-- 📊 **Efficiency Modes**: speed / balanced / memory / ultra
-
-## ⚡ Cold Start Benchmark
-
-**6.5s (72B)** — 79× faster than bitsandbytes, verified on H200 (150GB VRAM).
-
-| Model | bitsandbytes | ZSE (.zse) | Speedup |
-|-------|--------------|------------|----------|
-| **Qwen 7B** | 45.4s | **3.9s** | **11.6×** |
-| **Qwen 32B** | 120.0s | **21.4s** | **5.6×** |
-| **Qwen 72B** | 512.7s | **6.5s** | **79×** |
-
-### ZSE vs llama.cpp (72B)
-
-| Format | Cold Start | VRAM |
-|--------|-----------|------|
-| bitsandbytes | 512.7s | 139.1 GB |
-| llama.cpp GGUF | 10.2s | 36.3 GB |
-| **ZSE (.zse)** | **6.5s** | 76.6 GB |
-
-```bash
-# One-time conversion (~20s)
-zse convert Qwen/Qwen2.5-Coder-7B-Instruct -o qwen-7b.zse
-
-# Every subsequent start: 3.9s
-zse serve qwen-7b.zse
-```
-
-> **Note:** 72B results on NVIDIA H200 (150GB). 7B/32B on A100-80GB. Any modern SSD achieves sub-10s cold starts.
-
-## Memory Benchmarks (Verified, A100-80GB)
-
-| Model | FP16 | INT4/NF4 | Reduction | Throughput |
-|-------|------|----------|----------|------------|
-| Qwen 7B | 14.2 GB | **5.2 GB** | 63% ✅ | 12-15 tok/s |
-| Qwen 32B | ~64 GB | **19.3 GB** (NF4) / ~35 GB (.zse) | 70% ✅ | 7.9 tok/s |
-| 14B | ~28 GB | *~7 GB* | ⏳ est | - |
-| 70B | ~140 GB | *~24 GB* | ⏳ est | - |
-
-> **32B note:** Use NF4 (19.3 GB) on GPUs with <36 GB VRAM. Use `.zse` (35 GB, 5.6× faster start) on 40 GB+ GPUs.
+- 📦 **Single .zse File**: Model + tokenizer + config in one file
+- 🚫 **No Network Calls**: Everything embedded, works offline
+- ⚡ **Native INT4 CUDA**: bitsandbytes.matmul_4bit for fast inference
+- 🧠 **Memory Efficient**: 32B model in 21GB VRAM
+- 🏃 **Fast Cold Start**: 9s for 7B, 24s for 32B
+- 🎯 **Auto-Optimize**: Detects VRAM and picks optimal strategy
 
 ## Installation
 
@@ -64,195 +40,141 @@ zse serve qwen-7b.zse
 pip install zllm-zse
 ```
 
-With CUDA support (recommended):
-```bash
-pip install zllm-zse[cuda]
-```
-
-From source:
-```bash
-git clone https://github.com/Zyora-Dev/zse.git
-cd zse
-pip install -e ".[dev]"
-```
+**Requirements:**
+- Python 3.11+
+- CUDA GPU (8GB+ VRAM recommended)
+- bitsandbytes (auto-installed)
 
 ## Quick Start
 
-### Start Server
+### 1. Convert Model to .zse Format (One-Time)
 
 ```bash
-# Any HuggingFace model works!
-zse serve Qwen/Qwen2.5-7B-Instruct
-zse serve meta-llama/Llama-3.1-8B-Instruct
-zse serve mistralai/Mistral-7B-Instruct-v0.3
-zse serve microsoft/Phi-3-mini-4k-instruct
-zse serve google/gemma-2-9b-it
+# Convert any HuggingFace model
+zse convert Qwen/Qwen2.5-7B-Instruct -o qwen7b.zse
+zse convert Qwen/Qwen2.5-32B-Instruct -o qwen32b.zse
 
-# With memory optimization
-zse serve Qwen/Qwen2.5-32B-Instruct --max-memory 24GB
-
-# With recommendations
-zse serve meta-llama/Llama-3.1-70B-Instruct --recommend
-
-# Ultra memory efficiency
-zse serve deepseek-ai/DeepSeek-V2-Lite --efficiency ultra
-
-# GGUF models (via llama.cpp)
-zse serve ./model-Q4_K_M.gguf
+# Or in Python
+from zse.format.writer import convert_model
+convert_model("Qwen/Qwen2.5-7B-Instruct", "qwen7b.zse", quantization="int4")
 ```
 
-> **💡 Supported Models:** Any HuggingFace transformers model, safetensors, GGUF, or .zse format. Popular choices: Qwen, Llama, Mistral, Phi, Gemma, DeepSeek, Yi, and more.
+### 2. Load and Run
 
-### Interactive Chat
+```python
+from zse.format.reader_v2 import load_zse_model
 
-```bash
-zse chat Qwen/Qwen2.5-7B-Instruct
+# Load model (auto-detects optimal settings)
+model, tokenizer, info = load_zse_model("qwen7b.zse")
+
+# Generate
+inputs = tokenizer("Write a poem about AI:", return_tensors="pt").to("cuda")
+output = model.generate(**inputs, max_new_tokens=100)
+print(tokenizer.decode(output[0], skip_special_tokens=True))
 ```
 
-### Convert to ZSE Format
+### 3. Start Server (OpenAI-Compatible)
 
 ```bash
-zse convert Qwen/Qwen2.5-32B-Instruct -o qwen-32b.zse --target-memory 24GB
-```
-
-### Check Hardware
-
-```bash
-zse hardware
-```
-
-## API Server
-
-ZSE provides an OpenAI-compatible API:
-
-```bash
-zse serve Qwen/Qwen2.5-7B-Instruct --port 8000
+zse serve qwen7b.zse --port 8000
 ```
 
 ```python
 import openai
 
 client = openai.OpenAI(base_url="http://localhost:8000/v1", api_key="zse")
-
 response = client.chat.completions.create(
-    model="Qwen/Qwen2.5-7B-Instruct",
+    model="qwen7b",
     messages=[{"role": "user", "content": "Hello!"}]
 )
 print(response.choices[0].message.content)
 ```
 
-## Efficiency Modes
+## .zse Format Benefits
 
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| `speed` | Maximum throughput | Production with ample GPU memory |
-| `balanced` | Good throughput, moderate memory | Standard deployment (default) |
-| `memory` | Low memory, reduced throughput | Consumer GPUs |
-| `ultra` | Extreme memory savings | 4GB GPUs, laptops |
+| Feature | HuggingFace | .zse Format |
+|---------|-------------|-------------|
+| Cold start (7B) | 45s | **9s** |
+| Cold start (32B) | 120s | **24s** |
+| Network calls on load | Yes | **No** |
+| Files to manage | Many | **One** |
+| Quantization time | Runtime | **Pre-done** |
+
+## Advanced Usage
+
+### Control Caching Strategy
+
+```python
+# Auto (default): Detect VRAM, pick optimal strategy
+model, tok, info = load_zse_model("qwen7b.zse", cache_weights="auto")
+
+# Force bnb mode (low VRAM, fast inference)
+model, tok, info = load_zse_model("qwen7b.zse", cache_weights=False)
+
+# Force FP16 cache (max speed, high VRAM)
+model, tok, info = load_zse_model("qwen7b.zse", cache_weights=True)
+```
+
+### Benchmark Your Setup
 
 ```bash
-zse serve model --efficiency memory
+# Full benchmark
+python3 -c "
+import time, torch
+from zse.format.reader_v2 import load_zse_model
+
+t0 = time.time()
+model, tokenizer, info = load_zse_model('qwen7b.zse')
+print(f'Load: {time.time()-t0:.1f}s, VRAM: {torch.cuda.memory_allocated()/1e9:.1f}GB')
+
+inputs = tokenizer('Hello', return_tensors='pt').to('cuda')
+model.generate(**inputs, max_new_tokens=10)  # Warmup
+
+prompt = 'Write a detailed essay about AI.'
+inputs = tokenizer(prompt, return_tensors='pt').to('cuda')
+torch.cuda.synchronize()
+t0 = time.time()
+out = model.generate(**inputs, max_new_tokens=200, do_sample=False)
+torch.cuda.synchronize()
+tokens = out.shape[1] - inputs['input_ids'].shape[1]
+print(f'{tokens} tokens in {time.time()-t0:.2f}s = {tokens/(time.time()-t0):.1f} tok/s')
+"
 ```
 
-## Deployment
-
-### Developer Mode
+## CLI Commands
 
 ```bash
-zse serve model --mode dev
+# Convert model
+zse convert <model_id> -o output.zse
+
+# Start server
+zse serve <model.zse> --port 8000
+
+# Interactive chat
+zse chat <model.zse>
+
+# Show model info
+zse info <model.zse>
+
+# Check hardware
+zse hardware
 ```
 
-- No authentication required
-- SQLite database
-- Hot reload enabled
-- Debug logging
+## How It Works
 
-### Enterprise Mode
-
-```bash
-zse serve model --config configs/enterprise.yaml
-```
-
-- API key authentication
-- PostgreSQL + Redis
-- Prometheus metrics
-- Rate limiting
-- Multi-tenancy
-
-## Architecture
+1. **Conversion**: Quantize HF model to INT4, pack weights, embed tokenizer + config
+2. **Loading**: Memory-map .zse file, load INT4 weights directly to GPU
+3. **Inference**: Convert to bnb format on first forward, use CUDA kernel for matmul
 
 ```
-zse/
-├── core/                   # ZSE Native Engine (100% custom)
-│   ├── zattention/         # Custom attention kernels
-│   ├── zquantize/          # Quantization (GPTQ, HQQ, INT2-8)
-│   ├── zkv/                # Paged + quantized KV cache
-│   ├── zstream/            # Layer streaming + prefetch
-│   ├── zscheduler/         # Continuous batching
-│   └── zdistributed/       # Tensor/pipeline parallelism
-├── models/                 # Model loaders + architectures
-├── engine/                 # Executor + Orchestrator
-├── api/                    # CLI, FastAPI server, Web UI
-└── enterprise/             # Auth, monitoring, scaling
-```
-
-## GGUF Support
-
-GGUF models are supported via llama.cpp backend:
-
-```bash
-pip install zllm-zse[gguf]
-zse serve ./model.gguf
-```
-
-Note: GGUF uses llama.cpp for inference. Native ZSE engine handles HuggingFace, safetensors, and .zse formats.
-
-## Docker Deployment
-
-```bash
-# CPU
-docker run -p 8000:8000 ghcr.io/zyora-dev/zse:latest
-
-# GPU (NVIDIA)
-docker run --gpus all -p 8000:8000 ghcr.io/zyora-dev/zse:gpu
-
-# With model pre-loaded
-docker run -p 8000:8000 -e ZSE_MODEL=Qwen/Qwen2.5-0.5B-Instruct ghcr.io/zyora-dev/zse:latest
-```
-
-**Docker Compose:**
-```bash
-docker-compose up -d                    # CPU
-docker-compose --profile gpu up -d      # GPU
-```
-
-See [deploy/DEPLOY.md](deploy/DEPLOY.md) for full deployment guide including Runpod, Vast.ai, Railway, Render, and Kubernetes.
-
-## Development
-
-```bash
-# Install dev dependencies
-pip install -e ".[dev]"
-
-# Run tests
-pytest
-
-# Run tests with coverage
-pytest --cov=zse
-
-# Type checking
-mypy zse
-
-# Linting
-ruff check zse
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  HuggingFace    │────▶│   .zse File     │────▶│   GPU Model     │
+│  Model (FP16)   │     │   (INT4 + tok)  │     │   (bnb matmul)  │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+    One-time             Single file             Fast inference
+    conversion           ~0.5 bytes/param        58 tok/s (7B)
 ```
 
 ## License
 
 Apache 2.0
-
-## Acknowledgments
-
-- PagedAttention concept from vLLM (UC Berkeley)
-- Flash Attention from Tri Dao
-- GPTQ, HQQ, and other quantization research

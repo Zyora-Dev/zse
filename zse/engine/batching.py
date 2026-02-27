@@ -147,6 +147,9 @@ class BatchingEngine:
         # EOS token
         self._eos_token_id = getattr(tokenizer, 'eos_token_id', None)
         
+        # KV cache storage per request (request_id -> past_key_values)
+        self._kv_cache: Dict[str, Any] = {}
+        
     async def start(self):
         """Start the batching engine."""
         if self._running:
@@ -375,47 +378,39 @@ class BatchingEngine:
                     del self._active_requests[req.request_id]
     
     async def _run_prefill(self, batch: List[BatchRequest]):
-        """Run prefill phase - process all prompts."""
-        # Prepare batched input
-        all_tokens = []
-        all_positions = []
-        batch_indices = []
-        
-        for i, req in enumerate(batch):
-            tokens = req.prompt_tokens
-            positions = list(range(len(tokens)))
-            all_tokens.extend(tokens)
-            all_positions.extend(positions)
-            batch_indices.extend([i] * len(tokens))
-        
-        if not all_tokens:
-            return
-        
-        # Run model
-        input_ids = torch.tensor([all_tokens], dtype=torch.long, device=self.device)
-        
-        with torch.no_grad():
-            # Most models expect [batch, seq] input
-            outputs = self.model(input_ids)
-            
-            # Handle different output formats
-            if hasattr(outputs, 'logits'):
-                logits = outputs.logits
-            elif isinstance(outputs, tuple):
-                logits = outputs[0]
-            else:
-                logits = outputs
-        
-        # Store KV cache state would happen here in production
-        # For now, we'll do simple generation
-        
-        # Get first tokens for each sequence
-        # This is simplified - in production, use proper batched sampling
-        offset = 0
+        """Run prefill phase - process all prompts with KV cache."""
+        # Process each request individually to properly capture KV cache
+        # (Batched prefill with KV cache requires more complex handling)
         for req in batch:
-            seq_len = len(req.prompt_tokens)
-            # Get logits for last position of this sequence's prefill
-            seq_logits = logits[0, offset + seq_len - 1, :]
+            if not req.prompt_tokens:
+                continue
+            
+            input_ids = torch.tensor([req.prompt_tokens], dtype=torch.long, device=self.device)
+            
+            with torch.no_grad():
+                # Run model with use_cache=True to get KV cache
+                outputs = self.model(
+                    input_ids,
+                    use_cache=True,
+                )
+                
+                # Handle different output formats
+                if hasattr(outputs, 'logits'):
+                    logits = outputs.logits
+                    past_key_values = getattr(outputs, 'past_key_values', None)
+                elif isinstance(outputs, tuple):
+                    logits = outputs[0]
+                    past_key_values = outputs[1] if len(outputs) > 1 else None
+                else:
+                    logits = outputs
+                    past_key_values = None
+            
+            # Store KV cache for this request
+            if past_key_values is not None:
+                self._kv_cache[req.request_id] = past_key_values
+            
+            # Get logits for last position
+            seq_logits = logits[0, -1, :]
             
             # Sample first token
             token = self._sample_token(seq_logits, req.temperature, req.top_k, req.top_p)
@@ -429,43 +424,52 @@ class BatchingEngine:
             if req.token_queue:
                 await req.token_queue.put(text)
             
-            offset += seq_len
             self._total_tokens_generated += 1
     
     async def _run_decode(self, batch: List[BatchRequest]):
-        """Run decode phase - generate tokens one at a time."""
+        """Run decode phase - generate tokens one at a time with KV cache."""
         # Remove finished requests
         active_batch = [req for req in batch if not self._is_finished(req)]
         
         while active_batch:
-            # Prepare input - last token from each sequence
-            input_tokens = []
+            # Process each request with its own KV cache
+            newly_finished = []
+            
             for req in active_batch:
+                # Get last generated token
                 if req.generated_tokens:
-                    input_tokens.append(req.generated_tokens[-1])
+                    last_token = req.generated_tokens[-1]
                 else:
-                    # Fallback to last prompt token
-                    input_tokens.append(req.prompt_tokens[-1])
-            
-            if not input_tokens:
-                break
-            
-            # Run model
-            input_ids = torch.tensor([input_tokens], dtype=torch.long, device=self.device)
-            
-            with torch.no_grad():
-                outputs = self.model(input_ids)
+                    last_token = req.prompt_tokens[-1]
                 
-                if hasattr(outputs, 'logits'):
-                    logits = outputs.logits
-                elif isinstance(outputs, tuple):
-                    logits = outputs[0]
-                else:
-                    logits = outputs
-            
-            # Sample next tokens
-            for i, req in enumerate(active_batch):
-                token_logits = logits[0, i, :]
+                input_ids = torch.tensor([[last_token]], device=self.device)
+                
+                # Get this request's KV cache
+                past_kv = self._kv_cache.get(req.request_id)
+                
+                with torch.no_grad():
+                    outputs = self.model(
+                        input_ids,
+                        past_key_values=past_kv,
+                        use_cache=True,
+                    )
+                    
+                    if hasattr(outputs, 'logits'):
+                        logits = outputs.logits
+                        new_past_kv = getattr(outputs, 'past_key_values', None)
+                    elif isinstance(outputs, tuple):
+                        logits = outputs[0]
+                        new_past_kv = outputs[1] if len(outputs) > 1 else None
+                    else:
+                        logits = outputs
+                        new_past_kv = None
+                
+                # Update KV cache
+                if new_past_kv is not None:
+                    self._kv_cache[req.request_id] = new_past_kv
+                
+                # Sample next token
+                token_logits = logits[0, -1, :]
                 token = self._sample_token(token_logits, req.temperature, req.top_k, req.top_p)
                 req.generated_tokens.append(token)
                 
@@ -478,14 +482,16 @@ class BatchingEngine:
                     await req.token_queue.put(text)
                 
                 self._total_tokens_generated += 1
-            
-            # Check stopping conditions
-            newly_finished = []
-            for req in active_batch:
+                
+                # Check stopping condition
                 if self._is_finished(req):
                     newly_finished.append(req)
                     req.status = BatchRequestStatus.COMPLETED
                     req.completed_at = time.time()
+                    
+                    # Clean up KV cache for finished request
+                    if req.request_id in self._kv_cache:
+                        del self._kv_cache[req.request_id]
                     
                     # Signal completion
                     if req.future and not req.future.done():
@@ -499,7 +505,7 @@ class BatchingEngine:
             # Yield to event loop
             await asyncio.sleep(0)
         
-        # Finalize any remaining
+        # Finalize any remaining and clean up KV cache
         for req in batch:
             if not req.is_finished:
                 req.status = BatchRequestStatus.COMPLETED
@@ -508,6 +514,10 @@ class BatchingEngine:
                     req.future.set_result(req.generated_text)
                 if req.token_queue:
                     await req.token_queue.put(None)
+            
+            # Always clean up KV cache
+            if req.request_id in self._kv_cache:
+                del self._kv_cache[req.request_id]
     
     def _tokenize(self, text: str) -> List[int]:
         """Tokenize text."""

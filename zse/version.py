@@ -1,6 +1,6 @@
 """ZSE version information."""
 
-__version__ = "0.1.0"
+__version__ = "1.1.3"
 __version_info__ = tuple(int(x) for x in __version__.split("."))
 
 # Version metadata
@@ -9,5 +9,5 @@ VERSION_MINOR = __version_info__[1]
 VERSION_PATCH = __version_info__[2]
 
 # Build info (populated during release)
-BUILD_DATE = "2026-02-23"
+BUILD_DATE = "2026-02-27"
 GIT_COMMIT = "development"

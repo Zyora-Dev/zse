@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zllm-zse"
-version = "0.1.3"
+version = "1.2.0"
 description = "ZSE - Z Server Engine: Ultra memory-efficient LLM inference engine"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -121,6 +121,7 @@ include = ["zse*"]
 
 [tool.setuptools.package-data]
 zse = ["py.typed", "*.yaml", "*.json"]
+"zse.kernels" = ["*.cu"]
 
 # Pytest configuration
 [tool.pytest.ini_options]

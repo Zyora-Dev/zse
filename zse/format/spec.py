@@ -69,6 +69,9 @@ class TensorInfo:
     scale_offset: int = 0  # Offset to scales tensor
     zeros_offset: int = 0  # Offset to zeros tensor
     
+    # Original shape before quantization (for dequantization)
+    original_shape: Optional[Tuple[int, ...]] = None
+    
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary."""
         return {
@@ -82,11 +85,13 @@ class TensorInfo:
             "group_size": self.group_size,
             "scale_offset": self.scale_offset,
             "zeros_offset": self.zeros_offset,
+            "original_shape": list(self.original_shape) if self.original_shape else None,
         }
     
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "TensorInfo":
         """Deserialize from dictionary."""
+        orig_shape = d.get("original_shape")
         return cls(
             name=d["name"],
             shape=tuple(d["shape"]),
@@ -98,6 +103,7 @@ class TensorInfo:
             group_size=d.get("group_size", 0),
             scale_offset=d.get("scale_offset", 0),
             zeros_offset=d.get("zeros_offset", 0),
+            original_shape=tuple(orig_shape) if orig_shape else None,
         )
 
 
@@ -172,6 +178,9 @@ class ZSEHeader:
     source_model: str = ""
     source_revision: str = ""
     
+    # Full HuggingFace config (for offline loading)
+    hf_config_json: str = ""
+    
     def to_json(self) -> str:
         """Serialize header to JSON."""
         data = {
@@ -197,6 +206,7 @@ class ZSEHeader:
             "tensor_data_offset": self.tensor_data_offset,
             "source_model": self.source_model,
             "source_revision": self.source_revision,
+            "hf_config_json": self.hf_config_json,
         }
         return json.dumps(data, separators=(',', ':'))
     
@@ -227,6 +237,7 @@ class ZSEHeader:
             tensor_data_offset=data.get("tensor_data_offset", 0),
             source_model=data.get("source_model", ""),
             source_revision=data.get("source_revision", ""),
+            hf_config_json=data.get("hf_config_json", ""),
         )
         return header
     

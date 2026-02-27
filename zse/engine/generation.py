@@ -392,19 +392,25 @@ class TextGenerator:
         generated_tokens: List[int] = []
         generated_text = ""
         
-        # Generation loop
+        # Generation loop with KV cache for 2x+ speedup
         with torch.no_grad():
             current_ids = input_ids
+            past_key_values = None  # KV cache
             
             for _ in range(params.max_new_tokens):
                 start_time = time.perf_counter()
                 
-                # Forward pass
-                output = self.model(current_ids)
+                # Forward pass with KV cache
+                output = self.model(
+                    current_ids,
+                    past_key_values=past_key_values,
+                    use_cache=True,
+                )
                 
                 # Handle different output formats (raw tensor vs HuggingFace output)
                 if hasattr(output, 'logits'):
                     logits = output.logits
+                    past_key_values = output.past_key_values
                 else:
                     logits = output
                 
@@ -439,9 +445,8 @@ class TextGenerator:
                 if should_stop:
                     break
                 
-                # Update input for next iteration
-                next_token_tensor = torch.tensor([[next_token]], device=self.device)
-                current_ids = torch.cat([current_ids, next_token_tensor], dim=1)
+                # Only pass the new token (KV cache has the rest)
+                current_ids = torch.tensor([[next_token]], device=self.device)
     
     async def generate_stream_async(
         self,

@@ -63,6 +63,22 @@ from .writer import (
     convert_model,
 )
 
+# V2 implementations with proper INT4 support
+from .writer_v2 import (
+    ZSEWriterV2,
+    convert_model_v2,
+    quantize_tensor_int4_zse,
+    quantize_tensor_int8_zse,
+)
+
+from .reader_v2 import (
+    ZSEReaderV2,
+    load_zse_model,
+    dequantize_int4_zse,
+    dequantize_int8_zse,
+    QuantizedLinearZSE,
+)
+
 __all__ = [
     # Spec
     "ZSEHeader",
@@ -82,4 +98,14 @@ __all__ = [
     "ZSEWriter",
     "ConversionConfig",
     "convert_model",
+    # V2 - Proper INT4
+    "ZSEWriterV2",
+    "ZSEReaderV2",
+    "convert_model_v2",
+    "load_zse_model",
+    "quantize_tensor_int4_zse",
+    "quantize_tensor_int8_zse",
+    "dequantize_int4_zse",
+    "dequantize_int8_zse",
+    "QuantizedLinearZSE",
 ]
