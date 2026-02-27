@@ -8,24 +8,24 @@ import { useState, useRef, useEffect } from 'react'
 const features = [
   {
     icon: Zap,
-    title: '6.5s for 72B',
-    description: 'Load Qwen 72B in 6.5 seconds. 79× faster than bitsandbytes. No more waiting.',
-    stat: '79×',
-    statLabel: 'Faster',
+    title: '58.7 tok/s',
+    description: 'Generate at 58.7 tokens/sec on 7B models. Real throughput using bitsandbytes CUDA kernels.',
+    stat: '58.7',
+    statLabel: 'tok/s',
   },
   {
     icon: HardDrive,
-    title: '63-70% Memory Savings',
-    description: 'Run 32B models in 19GB VRAM. Fit larger models on your existing hardware.',
-    stat: '70%',
-    statLabel: 'Less VRAM',
+    title: '32B in 21GB VRAM',
+    description: 'Run 32B models on 24GB consumer GPUs (RTX 3090/4090). True memory efficiency.',
+    stat: '21',
+    statLabel: 'GB VRAM',
   },
   {
     icon: Cpu,
-    title: 'GPU + CPU Support',
-    description: 'Auto-detect hardware. Run on CUDA GPUs, Apple Silicon, or CPU-only setups.',
-    stat: '3',
-    statLabel: 'Platforms',
+    title: '9s Cold Start',
+    description: 'Load 7B models in 9 seconds. Single .zse file with embedded config and tokenizer.',
+    stat: '9.1',
+    statLabel: 'seconds',
   },
   {
     icon: Terminal,
@@ -37,20 +37,19 @@ const features = [
 ]
 
 const benchmarks = [
-  { model: 'Qwen 7B', bnb: '45.4s', zse: '3.9s', speedup: '11.6×', memory: '5.2GB' },
-  { model: 'Qwen 32B', bnb: '120.0s', zse: '21.4s', speedup: '5.6×', memory: '19.3GB' },
-  { model: 'Qwen 72B', bnb: '512.7s', zse: '6.5s', speedup: '79×', memory: '76.6GB' },
+  { model: 'Qwen 7B', fileSize: '5.57 GB', loadTime: '9.1s', throughput: '58.7 tok/s', memory: '5.9 GB' },
+  { model: 'Qwen 32B', fileSize: '19.23 GB', loadTime: '24.1s', throughput: '26.9 tok/s', memory: '20.9 GB' },
 ]
 
 const verifiedModels = [
-  { name: 'Qwen 2.5 7B', provider: 'Alibaba', vram: '4.5 GB', category: 'Chat/Code', optimized: true },
-  { name: 'Qwen 2.5 32B', provider: 'Alibaba', vram: '19 GB', category: 'Chat/Code', optimized: true },
-  { name: 'Mistral 7B v0.3', provider: 'Mistral AI', vram: '4.5 GB', category: 'Chat', optimized: true },
-  { name: 'DeepSeek Coder 6.7B', provider: 'DeepSeek', vram: '4 GB', category: 'Code', optimized: true },
-  { name: 'Llama 3.2 3B', provider: 'Meta', vram: '2 GB', category: 'Chat', optimized: false },
-  { name: 'Gemma 2 9B', provider: 'Google', vram: '5.5 GB', category: 'Reasoning', optimized: false },
-  { name: 'Phi-3 Mini', provider: 'Microsoft', vram: '2.4 GB', category: 'Reasoning', optimized: false },
-  { name: 'TinyLlama 1.1B', provider: 'TinyLlama', vram: '0.7 GB', category: 'Testing', optimized: false },
+  { name: 'Qwen 2.5 7B', provider: 'Alibaba', vram: '5.9 GB', category: 'Chat/Code', optimized: true },
+  { name: 'Qwen 2.5 32B', provider: 'Alibaba', vram: '20.9 GB', category: 'Chat/Code', optimized: true },
+  { name: 'Mistral 7B v0.3', provider: 'Mistral AI', vram: '~6 GB', category: 'Chat', optimized: false },
+  { name: 'DeepSeek Coder 6.7B', provider: 'DeepSeek', vram: '~5.5 GB', category: 'Code', optimized: false },
+  { name: 'Llama 3.2 3B', provider: 'Meta', vram: '~2.5 GB', category: 'Chat', optimized: false },
+  { name: 'Gemma 2 9B', provider: 'Google', vram: '~7 GB', category: 'Reasoning', optimized: false },
+  { name: 'Phi-3 Mini', provider: 'Microsoft', vram: '~3 GB', category: 'Reasoning', optimized: false },
+  { name: 'TinyLlama 1.1B', provider: 'TinyLlama', vram: '~1 GB', category: 'Testing', optimized: false },
 ]
 
 const howItWorks = [
@@ -108,10 +107,10 @@ const useCases = [
 ]
 
 const stats = [
-  { value: 6.5, suffix: 's', label: '72B Cold Start' },
-  { value: 45, suffix: '%', label: 'Less VRAM' },
-  { value: 79, suffix: '×', label: 'Faster Loading' },
-  { value: 100, suffix: '%', label: 'API Compatible' },
+  { value: 9.1, suffix: 's', label: '7B Cold Start' },
+  { value: 58.7, suffix: '', label: 'tok/s (7B)' },
+  { value: 20.9, suffix: 'GB', label: '32B VRAM' },
+  { value: 26.9, suffix: '', label: 'tok/s (32B)' },
 ]
 
 // Animated counter component
@@ -278,7 +277,7 @@ export default function HomePage() {
                 >
                   <Sparkles className="w-4 h-4" />
                 </motion.span>
-                <span>v0.1.3 released — 72B benchmarks!</span>
+                <span>v1.2.0 released — bnb.matmul_4bit integration!</span>
                 <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
               </Link>
             </motion.div>
@@ -299,9 +298,9 @@ export default function HomePage() {
               variants={itemVariants}
               className="mt-6 text-xl text-gray-400 max-w-2xl mx-auto"
             >
-              Load 72B models in <span className="text-lime font-semibold">6.5 seconds</span>. 
-              <span className="text-lime font-semibold">79× faster</span> than bitsandbytes. 
-              OpenAI-compatible API out of the box.
+              Run 32B models on <span className="text-lime font-semibold">24GB GPUs</span>. 
+              <span className="text-lime font-semibold">58.7 tok/s</span> on 7B. 
+              Single .zse file, no network calls.
             </motion.p>
 
             {/* Install Command */}
@@ -630,7 +629,7 @@ export default function HomePage() {
               Verified Benchmarks
             </h2>
             <p className="mt-4 text-gray-400">
-              .zse format vs bitsandbytes on-the-fly quantization. Tested on NVIDIA H200 (150GB VRAM).
+              .zse v1.2.0 performance with bnb.matmul_4bit. Tested on NVIDIA H200.
             </p>
           </motion.div>
 
@@ -645,10 +644,10 @@ export default function HomePage() {
                 <thead>
                   <tr className="border-b border-white/10">
                     <th className="px-6 py-4 text-left text-sm font-semibold text-gray-400">Model</th>
-                    <th className="px-6 py-4 text-center text-sm font-semibold text-gray-400">bitsandbytes</th>
-                    <th className="px-6 py-4 text-center text-sm font-semibold text-lime">ZSE (.zse)</th>
+                    <th className="px-6 py-4 text-center text-sm font-semibold text-gray-400">File Size</th>
+                    <th className="px-6 py-4 text-center text-sm font-semibold text-gray-400">Load Time</th>
                     <th className="px-6 py-4 text-center text-sm font-semibold text-gray-400">VRAM</th>
-                    <th className="px-6 py-4 text-right text-sm font-semibold text-gray-400">Speedup</th>
+                    <th className="px-6 py-4 text-right text-sm font-semibold text-lime">Throughput</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -662,15 +661,15 @@ export default function HomePage() {
                       className="border-b border-white/5 last:border-0 group"
                     >
                       <td className="px-6 py-5 text-white font-medium">{row.model}</td>
-                      <td className="px-6 py-5 text-center text-gray-400">{row.bnb}</td>
-                      <td className="px-6 py-5 text-center text-lime font-semibold">{row.zse}</td>
+                      <td className="px-6 py-5 text-center text-gray-400">{row.fileSize}</td>
+                      <td className="px-6 py-5 text-center text-gray-400">{row.loadTime}</td>
                       <td className="px-6 py-5 text-center text-gray-400">{row.memory}</td>
                       <td className="px-6 py-5 text-right">
                         <motion.span 
                           className="inline-flex items-center px-3 py-1 rounded-full bg-lime/10 text-lime text-sm font-semibold"
                           whileHover={{ scale: 1.1 }}
                         >
-                          {row.speedup}
+                          {row.throughput}
                         </motion.span>
                       </td>
                     </motion.tr>
@@ -687,51 +686,51 @@ export default function HomePage() {
             viewport={{ once: true }}
             className="mt-12 p-8 rounded-2xl bg-[#0a0a0a] border border-white/10"
           >
-            <h3 className="text-lg font-semibold text-white mb-2">Load Time Comparison (Qwen 72B)</h3>
-            <p className="text-sm text-gray-500 mb-6">Tested on NVIDIA H200 (150GB VRAM)</p>
+            <h3 className="text-lg font-semibold text-white mb-2">32B Model Performance (v1.2.0)</h3>
+            <p className="text-sm text-gray-500 mb-6">Fits on 24GB consumer GPUs (RTX 3090/4090)</p>
             <div className="space-y-4">
               <div>
                 <div className="flex justify-between text-sm mb-2">
-                  <span className="text-gray-400">bitsandbytes</span>
-                  <span className="text-gray-400">512.7s</span>
-                </div>
-                <div className="h-3 bg-white/5 rounded-full overflow-hidden">
-                  <motion.div
-                    className="h-full bg-gray-500 rounded-full"
-                    initial={{ width: 0 }}
-                    whileInView={{ width: '100%' }}
-                    viewport={{ once: true }}
-                    transition={{ duration: 1.5, ease: 'easeOut' }}
-                  />
-                </div>
-              </div>
-              <div>
-                <div className="flex justify-between text-sm mb-2">
-                  <span className="text-blue-400">llama.cpp (GGUF)</span>
-                  <span className="text-blue-400">10.2s</span>
-                </div>
-                <div className="h-3 bg-white/5 rounded-full overflow-hidden">
-                  <motion.div
-                    className="h-full bg-blue-500 rounded-full"
-                    initial={{ width: 0 }}
-                    whileInView={{ width: '2%' }}
-                    viewport={{ once: true }}
-                    transition={{ duration: 0.5, ease: 'easeOut', delay: 0.3 }}
-                  />
-                </div>
-              </div>
-              <div>
-                <div className="flex justify-between text-sm mb-2">
-                  <span className="text-lime">ZSE (.zse)</span>
-                  <span className="text-lime">6.5s</span>
+                  <span className="text-lime">File Size</span>
+                  <span className="text-lime">19.23 GB</span>
                 </div>
                 <div className="h-3 bg-white/5 rounded-full overflow-hidden">
                   <motion.div
                     className="h-full bg-lime rounded-full"
                     initial={{ width: 0 }}
-                    whileInView={{ width: '1.3%' }}
+                    whileInView={{ width: '80%' }}
                     viewport={{ once: true }}
-                    transition={{ duration: 0.5, ease: 'easeOut', delay: 0.6 }}
+                    transition={{ duration: 1.0, ease: 'easeOut' }}
+                  />
+                </div>
+              </div>
+              <div>
+                <div className="flex justify-between text-sm mb-2">
+                  <span className="text-lime">VRAM Usage</span>
+                  <span className="text-lime">20.9 GB</span>
+                </div>
+                <div className="h-3 bg-white/5 rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full bg-lime/80 rounded-full"
+                    initial={{ width: 0 }}
+                    whileInView={{ width: '87%' }}
+                    viewport={{ once: true }}
+                    transition={{ duration: 0.8, ease: 'easeOut', delay: 0.3 }}
+                  />
+                </div>
+              </div>
+              <div>
+                <div className="flex justify-between text-sm mb-2">
+                  <span className="text-lime">Throughput</span>
+                  <span className="text-lime">26.9 tok/s</span>
+                </div>
+                <div className="h-3 bg-white/5 rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full bg-lime/60 rounded-full"
+                    initial={{ width: 0 }}
+                    whileInView={{ width: '46%' }}
+                    viewport={{ once: true }}
+                    transition={{ duration: 0.6, ease: 'easeOut', delay: 0.6 }}
                   />
                 </div>
               </div>
