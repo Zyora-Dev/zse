@@ -195,7 +195,7 @@ Run local models with [OpenClaw](https://openclaw.ai) - the 24/7 AI assistant by
 
 ```bash
 # Start ZSE server
-zse serve Qwen/Qwen2.5-7B-Instruct --port 8000
+zse serve <model-name> --port 8000
 
 # Configure OpenClaw to use local ZSE
 export OPENAI_API_BASE=http://localhost:8000/v1
