@@ -189,6 +189,31 @@ zse hardware
     conversion           ~0.5 bytes/param        58 tok/s (7B)
 ```
 
+## OpenClaw Integration
+
+Run local models with [OpenClaw](https://openclaw.ai) - the 24/7 AI assistant by @steipete.
+
+```bash
+# Start ZSE server
+zse serve Qwen/Qwen2.5-7B-Instruct --port 8000
+
+# Configure OpenClaw to use local ZSE
+export OPENAI_API_BASE=http://localhost:8000/v1
+export OPENAI_API_KEY=zse
+```
+
+Or in OpenClaw's `config.yaml`:
+
+```yaml
+llm:
+  provider: openai-compatible
+  api_base: http://localhost:8000/v1
+  api_key: zse
+  model: default
+```
+
+**Benefits:** 100% private, zero API costs, works offline, run ANY model.
+
 ## Docker Deployment
 
 ```bash
