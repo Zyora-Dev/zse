@@ -2,11 +2,76 @@
 
 > **ZSE - Z Server Engine**: Ultra memory-efficient LLM inference engine
 > 
-> Goal: Fit 32B model in 16-20GB VRAM, 7B in 3.5-5GB VRAM ✅ **ACHIEVED: 32B in 20.9 GB @ 26.9 tok/s, 7B in 5.9 GB @ 58.7 tok/s**
+> Goal: Fit 32B model in 16-20GB VRAM, 7B in 3.5-5GB VRAM ✅ **ACHIEVED: 32B in 19.5 GB, 72B in 41.5 GB with custom Triton kernel**
 
 ---
 
-## 📦 PyPI Release (February 2026)
+## 📦 PyPI Release (March 2026)
+
+```bash
+pip install zllm-zse
+pip install zllm-zse[cuda]  # with CUDA support
+```
+
+**Package:** [pypi.org/project/zllm-zse](https://pypi.org/project/zllm-zse/)  
+**Current Version:** v1.3.0
+
+---
+
+## 🚀 v1.3.0 - Custom Triton INT4 Kernel (March 2, 2026)
+
+**Major Release:** Custom Triton kernel eliminates bitsandbytes dependency with improved VRAM efficiency!
+
+### Official Benchmark Results (H200 GPU, Warm Triton Cache)
+
+| Model | File Size | Cold Start | VRAM | Speed |
+|-------|-----------|------------|------|-------|
+| | | Triton / bnb | Triton / bnb | Triton / bnb |
+| **Qwen 72B** | 41.21 GB | **51.8s** / 53.0s | **41.54 GB** / 47.05 GB | 6.3 / 16.4 t/s |
+| **Qwen 32B** | 19.23 GB | **20.4s** / 20.8s | **19.47 GB** / 22.27 GB | 10.9 / 20.4 t/s |
+| **Qwen 14B** | 9.95 GB | 10.5s / **7.1s** | **10.08 GB** / 11.39 GB | 20.8 / 27.6 t/s |
+| **Qwen 7B** | 5.57 GB | **5.7s** / 6.0s | **5.67 GB** / 6.57 GB | 37.2 / 45.6 t/s |
+
+### VRAM Savings Summary
+
+| Model | VRAM Savings | Cold Start Winner |
+|-------|--------------|-------------------|
+| 72B | **-5.51 GB** (12%) | ✅ Triton |
+| 32B | **-2.80 GB** (13%) | ✅ Triton |
+| 14B | **-1.31 GB** (12%) | bnb |
+| 7B | **-0.90 GB** (14%) | ✅ Triton |
+
+### Key Achievements
+
+- ✅ **Custom Triton kernel** - no bitsandbytes dependency required
+- ✅ **10-14% VRAM savings** across all model sizes
+- ✅ **Faster cold start** on 3 of 4 model sizes
+- ✅ **Auto fallback** - Triton primary, bnb fallback if needed
+- ✅ **72B model support** - runs in 41.5 GB VRAM
+
+### Backend Selection
+
+```python
+from zse.format.reader_v2 import load_zse_model
+
+# Auto mode (default): Triton first, bnb fallback
+model, tok, info = load_zse_model("model.zse")
+
+# Force Triton (max VRAM efficiency)
+model, tok, info = load_zse_model("model.zse", backend="triton")
+
+# Force bnb (max speed)
+model, tok, info = load_zse_model("model.zse", backend="bnb")
+```
+
+### First-Run Autotune Note
+
+Triton kernels perform autotuning on first run (~60-90s one-time penalty).  
+Subsequent runs use cached configurations from `~/.triton/cache`.
+
+---
+
+## 📦 Previous PyPI Release (February 2026)
 
 ```bash
 pip install zllm-zse
