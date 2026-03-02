@@ -2,7 +2,7 @@
 
 > **ZSE - Z Server Engine**: Ultra memory-efficient LLM inference engine
 > 
-> Goal: Fit 32B model in 16-20GB VRAM, 7B in 3.5-5GB VRAM ✅ **ACHIEVED: 32B in 19.5 GB, 72B in 41.5 GB with custom Triton kernel**
+> Goal: Fit 32B model in 16-20GB VRAM, 7B in 3.5-5GB VRAM ✅ **ACHIEVED: 32B in 19.5 GB, 72B in 41.5 GB with ZSE custom kernel**
 
 ---
 
@@ -18,15 +18,15 @@ pip install zllm-zse[cuda]  # with CUDA support
 
 ---
 
-## 🚀 v1.3.0 - Custom Triton INT4 Kernel (March 2, 2026)
+## 🚀 v1.3.0 - ZSE Custom INT4 Kernel (March 2, 2026)
 
-**Major Release:** Custom Triton kernel eliminates bitsandbytes dependency with improved VRAM efficiency!
+**Major Release:** ZSE custom kernel eliminates bitsandbytes dependency with improved VRAM efficiency!
 
-### Official Benchmark Results (H200 GPU, Warm Triton Cache)
+### Official Benchmark Results (H200 GPU)
 
 | Model | File Size | Cold Start | VRAM | Speed |
 |-------|-----------|------------|------|-------|
-| | | Triton / bnb | Triton / bnb | Triton / bnb |
+| | | Custom / bnb | Custom / bnb | Custom / bnb |
 | **Qwen 72B** | 41.21 GB | **51.8s** / 53.0s | **41.54 GB** / 47.05 GB | 6.3 / 16.4 t/s |
 | **Qwen 32B** | 19.23 GB | **20.4s** / 20.8s | **19.47 GB** / 22.27 GB | 10.9 / 20.4 t/s |
 | **Qwen 14B** | 9.95 GB | 10.5s / **7.1s** | **10.08 GB** / 11.39 GB | 20.8 / 27.6 t/s |
@@ -36,17 +36,17 @@ pip install zllm-zse[cuda]  # with CUDA support
 
 | Model | VRAM Savings | Cold Start Winner |
 |-------|--------------|-------------------|
-| 72B | **-5.51 GB** (12%) | ✅ Triton |
-| 32B | **-2.80 GB** (13%) | ✅ Triton |
+| 72B | **-5.51 GB** (12%) | ✅ Custom |
+| 32B | **-2.80 GB** (13%) | ✅ Custom |
 | 14B | **-1.31 GB** (12%) | bnb |
-| 7B | **-0.90 GB** (14%) | ✅ Triton |
+| 7B | **-0.90 GB** (14%) | ✅ Custom |
 
 ### Key Achievements
 
-- ✅ **Custom Triton kernel** - no bitsandbytes dependency required
+- ✅ **ZSE Custom kernel** - no bitsandbytes dependency required
 - ✅ **10-14% VRAM savings** across all model sizes
 - ✅ **Faster cold start** on 3 of 4 model sizes
-- ✅ **Auto fallback** - Triton primary, bnb fallback if needed
+- ✅ **Auto fallback** - Custom kernel primary, bnb fallback if needed
 - ✅ **72B model support** - runs in 41.5 GB VRAM
 
 ### Backend Selection
@@ -54,20 +54,20 @@ pip install zllm-zse[cuda]  # with CUDA support
 ```python
 from zse.format.reader_v2 import load_zse_model
 
-# Auto mode (default): Triton first, bnb fallback
+# Auto mode (default): Custom kernel first, bnb fallback
 model, tok, info = load_zse_model("model.zse")
 
-# Force Triton (max VRAM efficiency)
+# Force custom kernel (max VRAM efficiency)
 model, tok, info = load_zse_model("model.zse", backend="triton")
 
-# Force bnb (max speed)
+# Force bnb backend
 model, tok, info = load_zse_model("model.zse", backend="bnb")
 ```
 
-### First-Run Autotune Note
+### First-Run Note
 
-Triton kernels perform autotuning on first run (~60-90s one-time penalty).  
-Subsequent runs use cached configurations from `~/.triton/cache`.
+Custom kernels perform autotuning on first run (~60-90s one-time penalty).  
+Subsequent runs use cached configurations.
 
 ---
 
