@@ -22,31 +22,53 @@
 
 Run 32B models on 24GB GPUs. Run 7B models on 8GB GPUs. Fast cold starts, single-file deployment.
 
-## 🚀 Benchmarks (Verified, February 2026)
+## 🚀 Benchmarks (Verified, March 2026)
 
-| Model | File Size | VRAM | Speed | Load Time | GPU |
-|-------|-----------|------|-------|-----------|-----|
-| **Qwen 7B** | 5.57 GB | **5.9 GB** | **58.7 tok/s** | 9.1s | H200 |
-| **Qwen 32B** | 19.23 GB | **20.9 GB** | **26.9 tok/s** | 24.1s | H200 |
+### Custom Triton Kernel (Default - Max VRAM Efficiency)
+
+| Model | File Size | VRAM | Speed | Cold Start | GPU |
+|-------|-----------|------|-------|------------|-----|
+| **Qwen 7B** | 5.57 GB | **5.67 GB** | 37.2 tok/s | 5.7s | H200 |
+| **Qwen 14B** | 9.95 GB | **10.08 GB** | 20.8 tok/s | 10.5s | H200 |
+| **Qwen 32B** | 19.23 GB | **19.47 GB** | 10.9 tok/s | 20.4s | H200 |
+| **Qwen 72B** | 41.21 GB | **41.54 GB** | 6.3 tok/s | 51.8s | H200 |
+
+### bitsandbytes Backend (Optional - Max Speed)
+
+| Model | VRAM | Speed | Cold Start |
+|-------|------|-------|------------|
+| **Qwen 7B** | 6.57 GB | 45.6 tok/s | 6.0s |
+| **Qwen 14B** | 11.39 GB | 27.6 tok/s | 7.1s |
+| **Qwen 32B** | 22.27 GB | 20.4 tok/s | 20.8s |
+| **Qwen 72B** | 47.05 GB | 16.4 tok/s | 53.0s |
+
+### VRAM Savings (Triton vs bnb)
+
+| Model | Triton VRAM | bnb VRAM | Savings |
+|-------|-------------|----------|----------|
+| 7B | 5.67 GB | 6.57 GB | **-0.90 GB (14%)** |
+| 14B | 10.08 GB | 11.39 GB | **-1.31 GB (12%)** |
+| 32B | 19.47 GB | 22.27 GB | **-2.80 GB (13%)** |
+| 72B | 41.54 GB | 47.05 GB | **-5.51 GB (12%)** |
 
 ### GPU Compatibility
 
-| GPU | VRAM | Max Model | Expected Speed |
-|-----|------|-----------|----------------|
-| RTX 3070/4070 | 8GB | 7B | ~50-60 tok/s |
-| RTX 3080/4080 | 12-16GB | 7B | ~50-60 tok/s |
-| RTX 3090/4090 | 24GB | **32B** | ~25-30 tok/s |
-| A100-40GB | 40GB | 32B | ~25-30 tok/s |
-| A100-80GB / H200 | 80-141GB | 72B | TBD |
+| GPU | VRAM | Max Model (Triton) | Max Model (bnb) |
+|-----|------|--------------------|-----------------|
+| RTX 3070/4070 | 8GB | **7B** | 7B |
+| RTX 3080 | 12GB | **14B** | 7B |
+| RTX 3090/4090 | 24GB | **32B** | 32B |
+| A100-40GB | 40GB | **32B** | 32B |
+| A100-80GB / H200 | 80-141GB | **72B** | 72B |
 
 ## Key Features
 
 - 📦 **Single .zse File**: Model + tokenizer + config in one file
 - 🚫 **No Network Calls**: Everything embedded, works offline
-- ⚡ **Native INT4 CUDA**: bitsandbytes.matmul_4bit for fast inference
-- 🧠 **Memory Efficient**: 32B model in 21GB VRAM
-- 🏃 **Fast Cold Start**: 9s for 7B, 24s for 32B
-- 🎯 **Auto-Optimize**: Detects VRAM and picks optimal strategy
+- ⚡ **Custom Triton Kernel**: Native INT4 inference, no bitsandbytes required
+- 🧠 **Memory Efficient**: 72B in 41GB, 32B in 19GB, 7B in 5.7GB VRAM
+- 🏃 **Fast Cold Start**: 5.7s for 7B, 20s for 32B, 52s for 72B
+- 🎯 **Auto Backend**: Triton (VRAM efficient) or bnb (max speed)
 
 ## Installation
 
@@ -178,15 +200,15 @@ zse hardware
 
 1. **Conversion**: Quantize HF model to INT4, pack weights, embed tokenizer + config
 2. **Loading**: Memory-map .zse file, load INT4 weights directly to GPU
-3. **Inference**: Convert to bnb format on first forward, use CUDA kernel for matmul
+3. **Inference**: Custom Triton kernel (default) or bnb for matmul
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │  HuggingFace    │────▶│   .zse File     │────▶│   GPU Model     │
-│  Model (FP16)   │     │   (INT4 + tok)  │     │   (bnb matmul)  │
+│  Model (FP16)   │     │   (INT4 + tok)  │     │ (Triton/bnb)    │
 └─────────────────┘     └─────────────────┘     └─────────────────┘
-    One-time             Single file             Fast inference
-    conversion           ~0.5 bytes/param        58 tok/s (7B)
+    One-time             Single file             12% less VRAM
+    conversion           ~0.5 bytes/param        vs bitsandbytes
 ```
 
 ## OpenClaw Integration
