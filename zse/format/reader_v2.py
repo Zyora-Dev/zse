@@ -249,9 +249,18 @@ class QuantizedLinearZSE(nn.Module):
     """
     Quantized linear layer that stores INT4 weights.
     
-    Uses bitsandbytes CUDA kernels for fast inference.
-    On first forward, converts ZSE INT4 format to bnb format for fast matmul.
+    Supports multiple backends:
+    - "triton": Native Triton v2 kernels (fastest, no conversion overhead)
+    - "bnb": bitsandbytes CUDA kernels (fallback if Triton fails)
+    - "auto": Try Triton first, fallback to bnb on error
+    
+    On first forward, converts ZSE INT4 format to chosen backend format.
     """
+    
+    # Backend options
+    BACKEND_TRITON = "triton"
+    BACKEND_BNB = "bnb"
+    BACKEND_AUTO = "auto"
     
     def __init__(
         self,
@@ -259,11 +268,13 @@ class QuantizedLinearZSE(nn.Module):
         out_features: int,
         group_size: int = 128,
         bias: bool = False,
+        backend: str = "auto",
     ):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.group_size = group_size
+        self.backend = backend
         
         # Packed INT4 weights: [out_features, in_features//2]
         self.register_buffer('weight_packed', torch.zeros(out_features, in_features // 2, dtype=torch.uint8))
@@ -280,6 +291,11 @@ class QuantizedLinearZSE(nn.Module):
         # bnb format (set on first forward or by convert_to_bnb)
         self._bnb_weight = None
         self._bnb_quant_state = None
+        
+        # Triton v2 format (set by convert_to_triton_v2)
+        self._triton_v2_weight = None  # [K//2, N] repacked layout
+        self._triton_v2_scales = None  # [num_groups, N] repacked layout
+        self._triton_v2_failed = False  # True if Triton kernel failed, use bnb fallback
         
         # Cached FP16 weight (optional, for cache_weights mode)
         self._cached_weight = None
@@ -313,6 +329,30 @@ class QuantizedLinearZSE(nn.Module):
         self.weight_packed = None
         self.weight_scales = None
     
+    def convert_to_triton_v2(self):
+        """Convert ZSE INT4 format to Triton v2 format (repacked layout)."""
+        if self._triton_v2_weight is not None:
+            return  # Already converted
+        
+        from zse.kernels import (
+            is_triton_v2_available,
+            repack_weights_for_v2,
+            repack_scales_for_v2,
+        )
+        
+        if not is_triton_v2_available():
+            raise RuntimeError("Triton v2 kernels not available")
+        
+        # Repack weights: [N, K//2] -> [K//2, N]
+        self._triton_v2_weight = repack_weights_for_v2(self.weight_packed)
+        
+        # Repack scales: [N, num_groups] -> [num_groups, N]
+        self._triton_v2_scales = repack_scales_for_v2(self.weight_scales)
+        
+        # Free original packed weights to save VRAM
+        self.weight_packed = None
+        self.weight_scales = None
+    
     def cache_weights(self):
         """Pre-dequantize weights to FP16 for maximum speed. Uses ~4x VRAM."""
         if self._cached_weight is None:
@@ -330,11 +370,35 @@ class QuantizedLinearZSE(nn.Module):
         self._cached_weight = None
         self._bnb_weight = None
         self._bnb_quant_state = None
+        self._triton_v2_weight = None
+        self._triton_v2_scales = None
+        self._triton_v2_failed = False
         torch.cuda.empty_cache()
     
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def _forward_triton_v2(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward using Triton v2 kernels."""
+        from zse.kernels import int4_matmul_triton_v2
+        
+        out = int4_matmul_triton_v2(
+            x,
+            self._triton_v2_weight,
+            self._triton_v2_scales,
+            self.group_size,
+        )
+        if self.bias is not None:
+            out = out + self.bias
+        return out
+    
+    def _forward_bnb(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward using bitsandbytes kernels."""
         import bitsandbytes as bnb
         
+        out = bnb.matmul_4bit(x, self._bnb_weight.t(), quant_state=self._bnb_quant_state)
+        if self.bias is not None:
+            out = out + self.bias
+        return out
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Ensure float16
         if x.dtype != torch.float16:
             x = x.half()
@@ -343,19 +407,101 @@ class QuantizedLinearZSE(nn.Module):
         if self._cached_weight is not None:
             return nn.functional.linear(x, self._cached_weight, self.bias)
         
-        # Fast path 2: bnb format (fast CUDA kernel, low VRAM)
-        if self._bnb_weight is not None:
-            out = bnb.matmul_4bit(x, self._bnb_weight.t(), quant_state=self._bnb_quant_state)
-            if self.bias is not None:
-                out = out + self.bias
-            return out
+        # Fast path 2: Triton v2 format (native INT4 kernel)
+        if self._triton_v2_weight is not None and not self._triton_v2_failed:
+            try:
+                return self._forward_triton_v2(x)
+            except Exception as e:
+                # Triton failed, mark as failed and convert to bnb fallback
+                import warnings
+                warnings.warn(
+                    f"Triton v2 kernel failed: {e}. Falling back to bitsandbytes.",
+                    RuntimeWarning,
+                )
+                self._triton_v2_failed = True
+                # Need to re-load weights from triton format for bnb conversion
+                # Since original weights are freed, we need to dequantize from triton format
+                self._convert_triton_to_bnb_fallback()
+                return self._forward_bnb(x)
         
-        # First call: convert to bnb format
+        # Fast path 3: bnb format (fast CUDA kernel, low VRAM)
+        if self._bnb_weight is not None:
+            return self._forward_bnb(x)
+        
+        # First call: convert based on backend preference
+        if self.backend in (self.BACKEND_TRITON, self.BACKEND_AUTO):
+            from zse.kernels import is_triton_v2_available
+            
+            if is_triton_v2_available() and not self._triton_v2_failed:
+                try:
+                    self.convert_to_triton_v2()
+                    return self._forward_triton_v2(x)
+                except Exception as e:
+                    if self.backend == self.BACKEND_TRITON:
+                        raise  # Strict Triton mode - don't fallback
+                    # Auto mode: fallback to bnb
+                    import warnings
+                    warnings.warn(
+                        f"Triton v2 conversion failed: {e}. Falling back to bitsandbytes.",
+                        RuntimeWarning,
+                    )
+                    self._triton_v2_failed = True
+        
+        # Fallback to bnb
         self.convert_to_bnb()
-        out = bnb.matmul_4bit(x, self._bnb_weight.t(), quant_state=self._bnb_quant_state)
-        if self.bias is not None:
-            out = out + self.bias
-        return out
+        return self._forward_bnb(x)
+    
+    def _convert_triton_to_bnb_fallback(self):
+        """Convert from Triton v2 format to bnb format (for fallback)."""
+        import bitsandbytes as bnb
+        from bitsandbytes.functional import quantize_4bit
+        from zse.kernels import int4_matmul_triton_v2
+        
+        # Dequantize using identity input to get weights
+        # Create identity-like input to extract weights
+        weight_fp16 = torch.empty(
+            (self.out_features, self.in_features),
+            dtype=torch.float16,
+            device=self._triton_v2_weight.device,
+        )
+        
+        # Dequantize row by row (memory efficient)
+        K = self.in_features
+        for i in range(0, self.out_features, 256):
+            end = min(i + 256, self.out_features)
+            num_rows = end - i
+            eye = torch.zeros((num_rows, K), dtype=torch.float16, device=self._triton_v2_weight.device)
+            identity = torch.eye(num_rows, K, dtype=torch.float16, device=self._triton_v2_weight.device)
+            
+            # Get weight slice using indexing
+            # Actually, we need to extract the weights differently
+            # Since triton format is [K//2, N], we repack back and dequantize
+            pass  # Simplify: just keep both formats for now
+        
+        # Actually simpler: for fallback, just re-quantize with bnb from triton format
+        # This is a rare path (only if Triton kernel crashes during inference)
+        # For simplicity, we'll keep the bnb conversion as-is and not free triton weights
+        # until bnb conversion is complete
+        
+        # Unpack triton format back to dequantized weights
+        # Weight: [K//2, N] -> [N, K//2] -> dequantize -> [N, K]
+        w_packed_nk = self._triton_v2_weight.t().contiguous()  # [N, K//2]
+        scales_ng = self._triton_v2_scales.t().contiguous()  # [N, num_groups]
+        
+        weight_fp16 = dequantize_int4_zse(w_packed_nk, scales_ng, self.group_size, dtype=torch.float16)
+        if weight_fp16.shape[1] > self.in_features:
+            weight_fp16 = weight_fp16[:, :self.in_features]
+        
+        # Re-quantize with bnb
+        self._bnb_weight, self._bnb_quant_state = quantize_4bit(
+            weight_fp16,
+            compress_statistics=False,
+            quant_type='nf4',
+        )
+        
+        # Free triton weights
+        self._triton_v2_weight = None
+        self._triton_v2_scales = None
 
 
 def convert_model_to_bnb(model: nn.Module) -> int:
@@ -371,6 +517,50 @@ def convert_model_to_bnb(model: nn.Module) -> int:
     for module in model.modules():
         if isinstance(module, QuantizedLinearZSE):
             module.convert_to_bnb()
+            count += 1
+    return count
+
+
+def convert_model_to_triton_v2(model: nn.Module) -> int:
+    """
+    Pre-convert all INT4 layers to Triton v2 format.
+    
+    This uses native INT4 Triton kernels - no dequant/requant overhead.
+    Requires Triton to be installed and working.
+    
+    Returns number of layers converted.
+    
+    Raises:
+        RuntimeError: If Triton v2 is not available.
+    """
+    from zse.kernels import is_triton_v2_available, get_triton_v2_error
+    
+    if not is_triton_v2_available():
+        raise RuntimeError(f"Triton v2 not available: {get_triton_v2_error()}")
+    
+    count = 0
+    for module in model.modules():
+        if isinstance(module, QuantizedLinearZSE):
+            module.convert_to_triton_v2()
+            count += 1
+    return count
+
+
+def set_model_backend(model: nn.Module, backend: str) -> int:
+    """
+    Set the backend for all INT4 layers.
+    
+    Args:
+        model: Model to update
+        backend: "triton", "bnb", or "auto"
+        
+    Returns:
+        Number of layers updated.
+    """
+    count = 0
+    for module in model.modules():
+        if isinstance(module, QuantizedLinearZSE):
+            module.backend = backend
             count += 1
     return count
 
@@ -434,6 +624,10 @@ def load_zse_model(
     zse_path: Union[str, Path],
     device: str = "cuda",
     cache_weights: Union[bool, str] = "auto",
+    backend: str = "auto",
+    lora: Optional[Union[str, Path]] = None,
+    enable_lora: bool = False,
+    lora_config: Optional[Any] = None,
 ) -> Tuple[nn.Module, Any, Dict]:
     """
     Load a .zse file into a usable model.
@@ -445,6 +639,13 @@ def load_zse_model(
             - True: Always cache (fast inference, ~15GB for 7B)
             - False: Never cache (memory efficient, ~6GB for 7B)
             - "auto": Detect available VRAM and decide automatically
+        backend: Kernel backend for inference:
+            - "triton": Use native Triton v2 INT4 kernels (fastest, no conversion)
+            - "bnb": Use bitsandbytes kernels (requires dequant/requant at load)
+            - "auto": Try Triton first, fallback to bnb if unavailable
+        lora: Path to LoRA adapter to load (for inference with fine-tuned adapter)
+        enable_lora: If True, add LoRA layers for training (but don't load weights)
+        lora_config: LoRA configuration (if enable_lora=True)
     
     Returns:
         (model, tokenizer, info)
@@ -485,7 +686,7 @@ def load_zse_model(
         if is_int4:
             # Load with INT4 weights kept in packed format
             print("  Loading INT4 weights (direct GPU)...")
-            model = _load_int4_model_direct_gpu(reader, config, device)
+            model = _load_int4_model_direct_gpu(reader, config, device, backend)
             
             # Decide whether to cache weights
             if cache_weights == "auto":
@@ -504,11 +705,8 @@ def load_zse_model(
                 vram_gb = torch.cuda.memory_allocated() / 1e9
                 print(f"    Cached {num_cached} layers, VRAM: {vram_gb:.2f} GB")
             else:
-                # Convert to bnb format for fast CUDA kernels at low VRAM
-                print("  Converting to bnb format (fast CUDA kernels)...")
-                num_converted = convert_model_to_bnb(model)
-                vram_gb = torch.cuda.memory_allocated() / 1e9
-                print(f"    Converted {num_converted} layers, VRAM: {vram_gb:.2f} GB")
+                # Convert to chosen backend format
+                _convert_model_to_backend(model, backend)
         else:
             # Load with dequantization (FP16)
             print("  Loading weights...")
@@ -519,13 +717,73 @@ def load_zse_model(
             
             model.load_state_dict(state_dict, assign=True, strict=False)
         
+        # Handle LoRA for training or inference
+        if enable_lora or lora:
+            from zse.training import LoRAConfig, add_lora_to_model, load_lora_adapter
+            
+            if enable_lora:
+                # Add LoRA layers for training
+                if lora_config is None:
+                    lora_config = LoRAConfig()
+                elif isinstance(lora_config, dict):
+                    lora_config = LoRAConfig(**lora_config)
+                
+                model = add_lora_to_model(model, lora_config)
+                info['lora_enabled'] = True
+                info['lora_config'] = lora_config
+            
+            if lora:
+                # Load pre-trained adapter weights
+                if not enable_lora:
+                    # If lora path given but enable_lora=False, 
+                    # we need to add LoRA layers first
+                    if lora_config is None:
+                        lora_config = LoRAConfig()
+                    model = add_lora_to_model(model, lora_config)
+                
+                model = load_lora_adapter(model, lora)
+                info['lora_loaded'] = str(lora)
+        
         return model, tokenizer, info
+
+
+def _convert_model_to_backend(model: nn.Module, backend: str) -> None:
+    """Convert model to the specified backend format."""
+    from zse.kernels import is_triton_v2_available, get_triton_v2_error
+    
+    # Determine which backend to use
+    use_triton = False
+    if backend in ("triton", "auto"):
+        if is_triton_v2_available():
+            use_triton = True
+        elif backend == "triton":
+            raise RuntimeError(f"Triton backend requested but not available: {get_triton_v2_error()}")
+    
+    if use_triton:
+        print("  Converting to Triton v2 format (native INT4 kernels)...")
+        try:
+            num_converted = convert_model_to_triton_v2(model)
+            vram_gb = torch.cuda.memory_allocated() / 1e9
+            print(f"    Converted {num_converted} layers to Triton v2, VRAM: {vram_gb:.2f} GB")
+            return
+        except Exception as e:
+            if backend == "triton":
+                raise
+            print(f"    Triton v2 conversion failed: {e}")
+            print("    Falling back to bitsandbytes...")
+    
+    # Fallback or explicit bnb
+    print("  Converting to bnb format (bitsandbytes kernels)...")
+    num_converted = convert_model_to_bnb(model)
+    vram_gb = torch.cuda.memory_allocated() / 1e9
+    print(f"    Converted {num_converted} layers to bnb, VRAM: {vram_gb:.2f} GB")
 
 
 def _load_int4_model_direct_gpu(
     reader: 'ZSEReaderV2',
     config: Any,
     device: str,
+    backend: str = "auto",
 ) -> nn.Module:
     """
     Load INT4 model directly to GPU.
@@ -536,6 +794,12 @@ def _load_int4_model_direct_gpu(
     3. Load INT4 packed weights directly to GPU
     4. Load other weights (embeddings, norms) directly to GPU
     5. Initialize computed buffers on GPU
+    
+    Args:
+        reader: ZSE file reader
+        config: Model config
+        device: Device to load to
+        backend: Kernel backend ("triton", "bnb", or "auto")
     """
     from transformers import AutoModelForCausalLM
     
@@ -567,7 +831,7 @@ def _load_int4_model_direct_gpu(
     
     # Replace Linear layers with QuantizedLinearZSE and load INT4 weights to GPU
     print("    Loading INT4 layers to GPU...")
-    replaced = _replace_linear_with_quantized_v2(model, int4_weights, reader, device)
+    replaced = _replace_linear_with_quantized_v2(model, int4_weights, reader, device, backend)
     print(f"    Replaced {replaced} layers with INT4")
     
     # Load non-quantized weights directly to GPU
@@ -615,10 +879,20 @@ def _replace_linear_with_quantized_v2(
     int4_weights: dict,
     reader: 'ZSEReaderV2',
     device: str,
+    backend: str = "auto",
 ) -> int:
     """
     Replace Linear layers with QuantizedLinearZSE using module path traversal.
-    Returns count of replaced layers.
+    
+    Args:
+        model: Model to modify
+        int4_weights: Dict of weight name -> (weight_info, scales_info)
+        reader: ZSE file reader
+        device: Device to load to
+        backend: Kernel backend to set on each layer
+        
+    Returns:
+        Count of replaced layers.
     """
     replaced = 0
     
@@ -655,13 +929,14 @@ def _replace_linear_with_quantized_v2(
             out_features = weight_info.shape[0]
             in_features = weight_info.shape[1] * 2
         
-        # Create quantized layer
+        # Create quantized layer with specified backend
         has_bias = hasattr(old_layer, 'bias') and old_layer.bias is not None
         quant_layer = QuantizedLinearZSE(
             in_features=in_features,
             out_features=out_features,
             group_size=group_size,
             bias=has_bias,
+            backend=backend,
         )
         
         # Load packed weights directly (no dequantization)
