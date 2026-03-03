@@ -117,18 +117,25 @@ class LoRALinear(nn.Module):
         else:
             self.scaling = alpha / rank
         
-        # Get device from base layer
+        # Get device and dtype from base layer
         if hasattr(base_layer, 'weight') and base_layer.weight is not None:
             device = base_layer.weight.device
+            dtype = base_layer.weight.dtype
         else:
-            device = next(base_layer.parameters()).device
+            param = next(base_layer.parameters())
+            device = param.device
+            dtype = param.dtype
         
-        # LoRA matrices (FP16 for training, same device as base)
+        # Use float32 for training stability if base is quantized
+        if dtype in (torch.int8, torch.uint8, torch.int4, torch.uint4):
+            dtype = torch.float16
+        
+        # LoRA matrices (same dtype and device as base)
         self.lora_A = nn.Parameter(
-            torch.zeros(rank, self.in_features, dtype=torch.float16, device=device)
+            torch.zeros(rank, self.in_features, dtype=dtype, device=device)
         )
         self.lora_B = nn.Parameter(
-            torch.zeros(self.out_features, rank, dtype=torch.float16, device=device)
+            torch.zeros(self.out_features, rank, dtype=dtype, device=device)
         )
         
         # Dropout
@@ -155,8 +162,8 @@ class LoRALinear(nn.Module):
         
         # LoRA output: (B @ A) @ x * scaling
         # Compute efficiently: B @ (A @ x) to avoid large intermediate
-        x_fp16 = x.to(torch.float16)
-        lora_output = self.lora_dropout(x_fp16)
+        x_lora = x.to(self.lora_A.dtype)
+        lora_output = self.lora_dropout(x_lora)
         lora_output = F.linear(lora_output, self.lora_A)  # [batch, seq, rank]
         lora_output = F.linear(lora_output, self.lora_B)  # [batch, seq, out]
         lora_output = lora_output * self.scaling
