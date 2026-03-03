@@ -213,3 +213,4 @@ yarn-error.log
 # Build artifacts
 *.whl
 *.tar.gz
+py.txt
