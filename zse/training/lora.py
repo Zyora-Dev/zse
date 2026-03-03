@@ -118,16 +118,38 @@ class LoRALinear(nn.Module):
             self.scaling = alpha / rank
         
         # Get device and dtype from base layer
+        device = None
+        dtype = None
+        
         if hasattr(base_layer, 'weight') and base_layer.weight is not None:
             device = base_layer.weight.device
             dtype = base_layer.weight.dtype
+        elif hasattr(base_layer, 'weight_packed'):
+            # INT4 Triton layers store weights as buffers
+            device = base_layer.weight_packed.device
+            dtype = torch.float16  # LoRA uses FP16 for quantized bases
+        elif hasattr(base_layer, 'scales'):
+            # Fallback to scales buffer
+            device = base_layer.scales.device
+            dtype = torch.float16
         else:
-            param = next(base_layer.parameters())
-            device = param.device
-            dtype = param.dtype
+            # Try parameters, then buffers
+            try:
+                param = next(base_layer.parameters())
+                device = param.device
+                dtype = param.dtype
+            except StopIteration:
+                # No parameters, try buffers
+                try:
+                    buf = next(base_layer.buffers())
+                    device = buf.device
+                    dtype = torch.float16  # Assume quantized
+                except StopIteration:
+                    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                    dtype = torch.float16
         
         # Use float16 for training if base is quantized (non-float dtype)
-        if not dtype.is_floating_point:
+        if dtype is not None and not dtype.is_floating_point:
             dtype = torch.float16
         
         # LoRA matrices (same dtype and device as base)
