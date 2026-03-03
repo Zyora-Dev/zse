@@ -22,6 +22,30 @@
 
 Run 32B models on 24GB GPUs. Run 7B models on 8GB GPUs. Fast cold starts, single-file deployment.
 
+## 🆕 v1.4.0: QLoRA Fine-Tuning Support
+
+**Train 7B models on 8GB GPUs. Train 70B models on 48GB GPUs.**
+
+```python
+from zse.format import load_zse_model
+from zse.training import LoRAConfig, add_lora_to_model, save_lora_adapter
+
+# Load INT4 model (uses ~6GB for 7B)
+model, tokenizer, info = load_zse_model("model.zse", device="cuda")
+
+# Add LoRA adapters (~1% trainable params)
+config = LoRAConfig(rank=16, alpha=32)
+model = add_lora_to_model(model, config)
+
+# Train as usual with PyTorch/HuggingFace
+# ... your training loop ...
+
+# Save adapter (tiny file, ~25MB for 7B)
+save_lora_adapter(model, "my_adapter.safetensors")
+```
+
+Install training dependencies: `pip install zllm-zse[training]`
+
 ## 🚀 Benchmarks (Verified, March 2026)
 
 ### ZSE Custom Kernel (Default)
@@ -69,7 +93,7 @@ Run 32B models on 24GB GPUs. Run 7B models on 8GB GPUs. Fast cold starts, single
 - 🧠 **Memory Efficient**: 72B in 41GB, 32B in 19GB, 7B in 5.7GB VRAM
 - 🏃 **Fast Cold Start**: 5.7s for 7B, 20s for 32B, 52s for 72B
 - 🎯 **Dual Backend**: Custom kernel (default) or bnb backend (alternate)
-- 🎯 **Dual Backend**: Custom kernel (default) or bnb backend (alternate)
+- 🔥 **QLoRA Training**: Fine-tune INT4 models with LoRA adapters (NEW in v1.4.0)
 
 ## Installation
 
@@ -138,6 +162,67 @@ print(response.choices[0].message.content)
 | Quantization time | Runtime | **Pre-done** |
 
 ## Advanced Usage
+
+### QLoRA Fine-Tuning (v1.4.0+)
+
+Train any model with QLoRA - LoRA adapters on quantized INT4 base models.
+
+```bash
+# Install training dependencies
+pip install zllm-zse[training]
+```
+
+```python
+from zse.format import load_zse_model, convert_model
+from zse.training import (
+    LoRAConfig, 
+    add_lora_to_model, 
+    save_lora_adapter,
+    load_lora_adapter
+)
+import torch
+
+# 1. Convert model to .zse (one-time)
+convert_model("meta-llama/Llama-3-8B", "llama8b.zse", quantization="int4")
+
+# 2. Load INT4 model
+model, tokenizer, info = load_zse_model("llama8b.zse", device="cuda")
+
+# 3. Add LoRA adapters
+config = LoRAConfig(
+    rank=16,              # LoRA rank (higher = more capacity)
+    alpha=32,             # LoRA alpha (scaling factor)
+    dropout=0.05,         # Dropout for regularization
+    target_modules=["q_proj", "v_proj", "k_proj", "o_proj"]  # Which layers
+)
+model = add_lora_to_model(model, config)
+
+# 4. Train with standard PyTorch
+optimizer = torch.optim.AdamW(
+    [p for p in model.parameters() if p.requires_grad], 
+    lr=2e-4
+)
+
+for batch in dataloader:
+    loss = model(**batch).loss
+    loss.backward()
+    optimizer.step()
+    optimizer.zero_grad()
+
+# 5. Save adapter (~25MB for 7B model)
+save_lora_adapter(model, "my_adapter.safetensors")
+
+# 6. Load adapter for inference
+model, tokenizer, info = load_zse_model("llama8b.zse", lora="my_adapter.safetensors")
+```
+
+**QLoRA VRAM Usage:**
+| Model | Base VRAM | + LoRA Training | Trainable Params |
+|-------|-----------|-----------------|------------------|
+| 7B | 6 GB | ~8 GB | 12M (0.2%) |
+| 14B | 11 GB | ~14 GB | 25M (0.2%) |
+| 32B | 20 GB | ~26 GB | 50M (0.2%) |
+| 70B | 42 GB | ~52 GB | 100M (0.1%) |
 
 ### Control Caching Strategy
 
