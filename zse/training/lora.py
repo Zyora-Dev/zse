@@ -126,8 +126,8 @@ class LoRALinear(nn.Module):
             device = param.device
             dtype = param.dtype
         
-        # Use float32 for training stability if base is quantized
-        if dtype in (torch.int8, torch.uint8, torch.int4, torch.uint4):
+        # Use float16 for training if base is quantized (non-float dtype)
+        if not dtype.is_floating_point:
             dtype = torch.float16
         
         # LoRA matrices (same dtype and device as base)
