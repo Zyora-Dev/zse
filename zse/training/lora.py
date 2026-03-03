@@ -117,12 +117,18 @@ class LoRALinear(nn.Module):
         else:
             self.scaling = alpha / rank
         
-        # LoRA matrices (FP16 for training)
+        # Get device from base layer
+        if hasattr(base_layer, 'weight') and base_layer.weight is not None:
+            device = base_layer.weight.device
+        else:
+            device = next(base_layer.parameters()).device
+        
+        # LoRA matrices (FP16 for training, same device as base)
         self.lora_A = nn.Parameter(
-            torch.zeros(rank, self.in_features, dtype=torch.float16)
+            torch.zeros(rank, self.in_features, dtype=torch.float16, device=device)
         )
         self.lora_B = nn.Parameter(
-            torch.zeros(self.out_features, rank, dtype=torch.float16)
+            torch.zeros(self.out_features, rank, dtype=torch.float16, device=device)
         )
         
         # Dropout
