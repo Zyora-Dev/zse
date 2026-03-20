@@ -1,0 +1,13 @@
+.git
+__pycache__
+*.pyc
+.pytest_cache
+dist
+*.egg-info
+zllm_zse.egg-info
+.benchmarks
+node_modules
+website/node_modules
+website/.next
+zmesh
+*.zse

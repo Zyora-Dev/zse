@@ -9,6 +9,7 @@ Key Features:
 - zKV: Quantized KV cache with sliding precision
 - zStream: Layer streaming with async prefetch
 - zOrchestrator: Smart memory recommendations based on FREE memory
+- zCrypt: Privacy layer for secure GPU farming (NEW)
 - Efficiency modes: speed / balanced / memory / ultra
 
 Memory Targets:
@@ -27,6 +28,10 @@ Usage:
     from zse import Engine
     engine = Engine("meta-llama/Llama-3-8B", max_memory="8GB")
     response = engine.generate("Hello, world!")
+    
+    # Privacy (NEW)
+    from zse.zcrypt import ZCrypt, PrivacyLevel
+    privacy = ZCrypt(level=PrivacyLevel.ENHANCED)
 """
 
 from zse.version import __version__, __version_info__
@@ -35,3 +40,10 @@ __all__ = [
     "__version__",
     "__version_info__",
 ]
+
+# Optional: Export privacy module
+try:
+    from zse.zcrypt import ZCrypt, PrivacyLevel, PrivacyConfig
+    __all__.extend(["ZCrypt", "PrivacyLevel", "PrivacyConfig"])
+except ImportError:
+    pass  # Privacy module not fully installed
