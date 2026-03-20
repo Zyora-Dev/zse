@@ -12,6 +12,7 @@ import time
 import asyncio
 import signal
 import os
+import shutil
 import warnings
 from enum import Enum
 
@@ -115,12 +116,15 @@ def show_quick_commands() -> None:
     table.add_column("Command", style="green")
     table.add_column("Description", style="white")
     
+    table.add_row("zse pull <model>", "Download & cache model (.zse)")
+    table.add_row("zse list", "Browse available models")
     table.add_row("zse serve <model>", "Start inference server")
     table.add_row("zse chat <model>", "Interactive chat session")
     table.add_row("zse convert <model> -o <file>", "Convert to .zse format")
     table.add_row("zse info <model>", "Show model information")
     table.add_row("zse hardware", "Display hardware info")
     table.add_row("zse benchmark <model>", "Run benchmarks")
+    table.add_row("zse login", "Save HuggingFace token")
     
     console.print(Align.center(table))
 
@@ -499,6 +503,20 @@ def main(
         interactive_mode()
 
 
+def _resolve_model(model: str) -> str:
+    """Resolve a model reference: check cache first, then pass through."""
+    try:
+        from zse.models.cache import ModelCache
+        cache = ModelCache()
+        resolved = cache.resolve(model)
+        if resolved:
+            console.print(f"[dim]Resolved from cache: {resolved}[/dim]")
+            return resolved
+    except Exception:
+        pass
+    return model
+
+
 def _run_server(
     model: Optional[str],
     host: str,
@@ -512,6 +530,10 @@ def _run_server(
         import uvicorn
         from zse.api.server.app import create_app
         from zse.api.server.state import server_state
+        
+        # Resolve model from cache
+        if model:
+            model = _resolve_model(model)
         
         console.print("[cyan]Initializing ZSE engine...[/cyan]")
         
@@ -692,6 +714,9 @@ def _run_chat_session(
 ) -> None:
     """Run an actual chat session with the model."""
     from zse.engine.orchestrator.core import IntelligenceOrchestrator
+    
+    # Resolve model from cache
+    model = _resolve_model(model)
     
     quant = _efficiency_to_quantization(efficiency)
     target_vram = _parse_memory_str(max_memory)
@@ -1972,3 +1997,463 @@ def audit_command(
         console.print(f"[red]Unknown action: {action}[/red]")
         console.print("Valid actions: summary, recent, query, export, clear, stats")
         raise typer.Exit(1)
+
+
+# =============================================================================
+# Model Pull / List / Login Commands
+# =============================================================================
+
+
+@app.command()
+def pull(
+    model: Annotated[
+        str,
+        typer.Argument(
+            help="Model to download (short alias, HuggingFace ID, or registry name)",
+        ),
+    ],
+    quantization: Annotated[
+        str,
+        typer.Option("--quant", "-q", help="Quantization: int4 (default), int8, fp16"),
+    ] = "int4",
+    force: Annotated[
+        bool,
+        typer.Option("--force", "-f", help="Force re-download even if cached"),
+    ] = False,
+    alias: Annotated[
+        Optional[str],
+        typer.Option("--alias", "-a", help="Custom alias for the model"),
+    ] = None,
+) -> None:
+    """
+    Download and cache a model in .zse format.
+
+    Checks for pre-converted .zse on HuggingFace first (fast).
+    Falls back to downloading the full model and converting locally.
+
+    Examples:
+        zse pull qwen-7b                    # Short alias
+        zse pull Qwen/Qwen2.5-7B-Instruct   # Full HF ID
+        zse pull llama-8b --quant int8       # INT8 quantization
+        zse pull mistral-7b --force          # Re-download
+    """
+    from zse.models.cache import (
+        ModelCache, resolve_model_to_hf_id, make_alias,
+        get_hf_zse_repo, check_hf_repo_exists, get_hf_token,
+    )
+
+    show_banner()
+    cache = ModelCache()
+
+    # 1. Resolve model reference to HF ID
+    hf_model_id = resolve_model_to_hf_id(model)
+    if not hf_model_id:
+        # Try as direct HF path
+        if "/" in model:
+            hf_model_id = model
+        else:
+            console.print(f"[red]Could not resolve model: {model}[/red]")
+            console.print("[dim]Try a full HuggingFace ID (e.g., Qwen/Qwen2.5-7B-Instruct)[/dim]")
+            console.print("[dim]Or run 'zse list' to see available models[/dim]")
+            raise typer.Exit(1)
+
+    model_alias = alias or make_alias(hf_model_id)
+
+    # 2. Check if already cached
+    if not force:
+        cached = cache.get_cached(model_alias)
+        if cached:
+            console.print(Panel.fit(
+                f"[bold green]Model already cached![/bold green]\n\n"
+                f"[bold]Model:[/bold] {cached.hf_model_id}\n"
+                f"[bold]Path:[/bold] {cached.zse_path}\n"
+                f"[bold]Size:[/bold] {cached.file_size_gb:.2f} GB\n"
+                f"[bold]Quant:[/bold] {cached.quantization.upper()}\n\n"
+                f"[dim]Use --force to re-download[/dim]",
+                title="[bold blue]✅ Cached[/bold blue]",
+                border_style="green",
+            ))
+            return
+
+    console.print(Panel.fit(
+        f"[bold]Model:[/bold] [green]{hf_model_id}[/green]\n"
+        f"[bold]Alias:[/bold] [cyan]{model_alias}[/cyan]\n"
+        f"[bold]Quant:[/bold] [yellow]{quantization.upper()}[/yellow]\n"
+        f"[bold]Cache:[/bold] {cache.cache_dir}",
+        title="[bold blue]⬇️  ZSE Pull[/bold blue]",
+        border_style="blue",
+    ))
+
+    # 3. Check for pre-converted .zse model on HuggingFace
+    zse_repo = get_hf_zse_repo(hf_model_id, quantization)
+    pre_converted = False
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task(f"[cyan]Checking for pre-converted model ({zse_repo})...", total=None)
+        pre_converted = check_hf_repo_exists(zse_repo)
+        if pre_converted:
+            progress.update(task, description="[green]Pre-converted model found!")
+        else:
+            progress.update(task, description="[yellow]No pre-converted model, will convert locally")
+
+    if pre_converted:
+        # Download pre-converted .zse directly
+        _pull_preconverted(cache, zse_repo, hf_model_id, model_alias, quantization)
+    else:
+        # Download FP16 + convert locally
+        _pull_and_convert(cache, hf_model_id, model_alias, quantization)
+
+
+def _pull_preconverted(
+    cache,
+    zse_repo: str,
+    hf_model_id: str,
+    model_alias: str,
+    quantization: str,
+) -> None:
+    """Download a pre-converted .zse model from HuggingFace."""
+    from zse.models.cache import get_hf_token
+
+    console.print(f"\n[cyan]Downloading pre-converted .zse from {zse_repo}...[/cyan]")
+
+    try:
+        from huggingface_hub import hf_hub_download, list_repo_files
+
+        token = get_hf_token()
+
+        # Find the .zse file in the repo
+        files = list_repo_files(zse_repo, token=token)
+        zse_files = [f for f in files if f.endswith(".zse")]
+
+        if not zse_files:
+            console.print("[yellow]No .zse file found in repo, falling back to local convert...[/yellow]")
+            _pull_and_convert(cache, hf_model_id, model_alias, quantization)
+            return
+
+        zse_filename = zse_files[0]
+        dest_path = cache.cache_dir / cache.get_zse_filename(model_alias, quantization)
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task(f"[cyan]Downloading {zse_filename}...", total=None)
+
+            downloaded_path = hf_hub_download(
+                zse_repo,
+                zse_filename,
+                local_dir=str(cache.cache_dir),
+                token=token,
+            )
+
+            # Move to standard cache location
+            dl_path = Path(downloaded_path)
+            if dl_path != dest_path:
+                shutil.move(str(dl_path), str(dest_path))
+
+            progress.update(task, description="[green]Download complete!")
+
+        # Register in cache
+        cached = cache.add(model_alias, hf_model_id, dest_path, quantization, source="pre-converted")
+
+        console.print(Panel.fit(
+            f"[bold green]✅ Ready![/bold green] ({cached.file_size_gb:.2f} GB)\n\n"
+            f"[bold]Path:[/bold] {cached.zse_path}\n"
+            f"[bold]Source:[/bold] Pre-converted (fast download)\n\n"
+            f"[dim]Run:[/dim]  zse serve {model_alias}\n"
+            f"[dim]Chat:[/dim] zse chat {model_alias}",
+            title="[bold blue]🎉 Model Ready[/bold blue]",
+            border_style="green",
+        ))
+
+    except Exception as e:
+        console.print(f"[red]Download failed: {e}[/red]")
+        console.print("[yellow]Falling back to local conversion...[/yellow]")
+        _pull_and_convert(cache, hf_model_id, model_alias, quantization)
+
+
+def _pull_and_convert(
+    cache,
+    hf_model_id: str,
+    model_alias: str,
+    quantization: str,
+) -> None:
+    """Download model from HuggingFace and convert to .zse locally."""
+    import torch
+    from zse.models.cache import get_hf_token
+
+    console.print(f"\n[cyan]Downloading {hf_model_id} and converting to .zse...[/cyan]")
+
+    dest_path = cache.cache_dir / cache.get_zse_filename(model_alias, quantization)
+
+    try:
+        from zse.format.writer import ZSEWriter, ConversionConfig
+
+        quant_map = {"int4": "int4", "int8": "int8", "fp16": "none", "none": "none"}
+        quant_setting = quant_map.get(quantization.lower(), "int4")
+
+        config = ConversionConfig(
+            quantization=quant_setting,
+            compute_dtype=torch.float16,
+            include_tokenizer=True,
+        )
+
+        writer = ZSEWriter(dest_path, config)
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("[cyan]Downloading & converting...", total=100)
+
+            progress.update(task, advance=10, description="[cyan]Downloading model weights...")
+
+            result_path = writer.convert_from_hf(
+                hf_model_id,
+                trust_remote_code=True,
+            )
+
+            progress.update(task, completed=100, description="[green]Conversion complete!")
+
+        # Register in cache
+        cached = cache.add(model_alias, hf_model_id, dest_path, quantization, source="local-convert")
+
+        console.print(Panel.fit(
+            f"[bold green]✅ Ready![/bold green] ({cached.file_size_gb:.2f} GB)\n\n"
+            f"[bold]Path:[/bold] {cached.zse_path}\n"
+            f"[bold]Source:[/bold] Downloaded & converted locally\n\n"
+            f"[dim]Run:[/dim]  zse serve {model_alias}\n"
+            f"[dim]Chat:[/dim] zse chat {model_alias}",
+            title="[bold blue]🎉 Model Ready[/bold blue]",
+            border_style="green",
+        ))
+
+    except Exception as e:
+        console.print(f"[red]❌ Pull failed: {e}[/red]")
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
+        raise typer.Exit(1)
+
+
+@app.command(name="list")
+def list_models(
+    category: Annotated[
+        Optional[str],
+        typer.Option("--category", "-c", help="Filter by category: chat, code, reasoning"),
+    ] = None,
+    size: Annotated[
+        Optional[str],
+        typer.Option("--size", "-s", help="Filter by size: tiny, small, medium, large, xlarge"),
+    ] = None,
+    vram: Annotated[
+        Optional[float],
+        typer.Option("--vram", "-v", help="Max VRAM in GB (shows models that fit)"),
+    ] = None,
+    cached_only: Annotated[
+        bool,
+        typer.Option("--cached", help="Show only cached/downloaded models"),
+    ] = False,
+) -> None:
+    """
+    Browse available models.
+
+    Examples:
+        zse list                        # All models
+        zse list --category code        # Code models only
+        zse list --vram 8               # Models that fit in 8GB VRAM
+        zse list --cached               # Downloaded models only
+    """
+    from zse.models.registry import get_registry, ModelCategory, ModelSize
+    from zse.models.cache import ModelCache
+
+    show_banner()
+    cache = ModelCache()
+    cached_models = {m.hf_model_id: m for m in cache.list_cached()}
+
+    if cached_only:
+        # Show only cached models
+        cached_list = cache.list_cached()
+        if not cached_list:
+            console.print("[yellow]No cached models. Use 'zse pull <model>' to download.[/yellow]")
+            return
+
+        table = Table(
+            title="[bold cyan]Cached Models[/bold cyan]",
+            box=box.ROUNDED,
+            show_header=True,
+            header_style="bold magenta",
+        )
+        table.add_column("Alias", style="cyan", width=25)
+        table.add_column("Model", style="white", width=35)
+        table.add_column("Quant", style="yellow", width=6)
+        table.add_column("Size", style="green", width=10)
+        table.add_column("Source", style="dim", width=14)
+
+        for m in cached_list:
+            table.add_row(
+                m.alias,
+                m.hf_model_id,
+                m.quantization.upper(),
+                f"{m.file_size_gb:.2f} GB",
+                m.source,
+            )
+
+        console.print(table)
+        console.print(f"\n[dim]Total cache: {cache.cache_size_gb():.2f} GB[/dim]")
+        return
+
+    # Show registry models
+    registry = get_registry()
+    models = registry.list_all()
+
+    # Apply filters
+    if category:
+        try:
+            cat = ModelCategory(category.lower())
+            models = [m for m in models if cat in m.categories]
+        except ValueError:
+            console.print(f"[red]Invalid category: {category}[/red]")
+            console.print(f"[dim]Valid: {', '.join(c.value for c in ModelCategory)}[/dim]")
+            raise typer.Exit(1)
+
+    if size:
+        try:
+            sz = ModelSize(size.lower())
+            models = [m for m in models if m.size == sz]
+        except ValueError:
+            console.print(f"[red]Invalid size: {size}[/red]")
+            console.print(f"[dim]Valid: {', '.join(s.value for s in ModelSize)}[/dim]")
+            raise typer.Exit(1)
+
+    if vram:
+        models = [m for m in models if m.vram_int4_gb <= vram]
+
+    if not models:
+        console.print("[yellow]No models match your filters.[/yellow]")
+        return
+
+    table = Table(
+        title="[bold cyan]Available Models[/bold cyan]",
+        box=box.ROUNDED,
+        show_header=True,
+        header_style="bold magenta",
+    )
+    table.add_column("", width=2)  # cached indicator
+    table.add_column("Model", style="white", width=30)
+    table.add_column("Params", style="cyan", justify="right", width=8)
+    table.add_column("INT4 VRAM", style="green", justify="right", width=10)
+    table.add_column("Category", style="yellow", width=16)
+    table.add_column("Provider", style="dim", width=12)
+
+    for m in models:
+        is_cached = "✅" if m.model_id in cached_models else ""
+        cats = ", ".join(c.value for c in m.categories[:2])
+        table.add_row(
+            is_cached,
+            m.name,
+            m.parameters,
+            f"{m.vram_int4_gb:.1f} GB",
+            cats,
+            m.provider,
+        )
+
+    console.print(table)
+    console.print(f"\n[dim]{len(models)} models available. ✅ = cached locally[/dim]")
+    console.print("[dim]Pull: zse pull <model-name-or-hf-id>[/dim]")
+
+
+@app.command()
+def login(
+    token: Annotated[
+        Optional[str],
+        typer.Argument(help="HuggingFace access token (or enter interactively)"),
+    ] = None,
+) -> None:
+    """
+    Save HuggingFace token for accessing gated models (Llama, etc).
+
+    Get your token from: https://huggingface.co/settings/tokens
+
+    Examples:
+        zse login                    # Interactive prompt
+        zse login hf_xxxxxxxxxxxxx   # Direct token
+    """
+    from zse.models.cache import save_hf_token, get_hf_token
+
+    show_banner()
+
+    if not token:
+        console.print("[bold]Login to HuggingFace[/bold]")
+        console.print("[dim]Get your token from: https://huggingface.co/settings/tokens[/dim]\n")
+
+        existing = get_hf_token()
+        if existing:
+            console.print(f"[green]Currently logged in[/green] (token: {existing[:8]}...)")
+            if not Confirm.ask("Replace with new token?", default=False):
+                return
+
+        token = Prompt.ask("[cyan]Enter HuggingFace token[/cyan]", password=True)
+
+    if not token or not token.strip():
+        console.print("[red]No token provided.[/red]")
+        raise typer.Exit(1)
+
+    token = token.strip()
+    save_hf_token(token)
+    console.print(f"[green]✅ Token saved![/green] ({token[:8]}...)")
+    console.print("[dim]You can now pull gated models like meta-llama/Llama-3-8B[/dim]")
+
+
+@app.command()
+def logout() -> None:
+    """Remove saved HuggingFace token."""
+    from zse.models.cache import remove_hf_token
+
+    if remove_hf_token():
+        console.print("[green]✅ Token removed.[/green]")
+    else:
+        console.print("[yellow]No token found.[/yellow]")
+
+
+@app.command()
+def cached() -> None:
+    """Show cached models and cache info."""
+    from zse.models.cache import ModelCache
+
+    show_banner()
+    cache = ModelCache()
+    models = cache.list_cached()
+
+    if not models:
+        console.print("[yellow]No cached models.[/yellow]")
+        console.print("[dim]Use 'zse pull <model>' to download and cache models.[/dim]")
+        return
+
+    table = Table(
+        title="[bold cyan]Cached Models[/bold cyan]",
+        box=box.ROUNDED,
+        show_header=True,
+        header_style="bold magenta",
+    )
+    table.add_column("Alias", style="cyan", width=28)
+    table.add_column("Quant", style="yellow", width=6)
+    table.add_column("Size", style="green", width=10)
+    table.add_column("Cached", style="dim", width=12)
+
+    for m in models:
+        cached_date = m.cached_at[:10] if m.cached_at else "?"
+        table.add_row(m.alias, m.quantization.upper(), f"{m.file_size_gb:.2f} GB", cached_date)
+
+    console.print(table)
+    console.print(f"\n[bold]Cache directory:[/bold] {cache.cache_dir}")
+    console.print(f"[bold]Total size:[/bold] {cache.cache_size_gb():.2f} GB")

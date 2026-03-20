@@ -165,6 +165,7 @@ cython_debug/
 *.pt
 *.pth
 models/
+!zse/models/
 checkpoints/
 
 # Logs
@@ -214,3 +215,4 @@ yarn-error.log
 *.whl
 *.tar.gz
 py.txt
+zmesh/

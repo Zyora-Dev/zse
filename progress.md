@@ -14,7 +14,7 @@ pip install zllm-zse[cuda]  # with CUDA support
 ```
 
 **Package:** [pypi.org/project/zllm-zse](https://pypi.org/project/zllm-zse/)  
-**Current Version:** v1.3.0
+**Current Version:** v1.4.0
 
 ---
 
