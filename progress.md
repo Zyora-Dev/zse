@@ -114,6 +114,37 @@ Major breakthrough: integrated `bitsandbytes.matmul_4bit` CUDA kernels for fast 
 
 ---
 
+## 🤗 Pre-Converted Models (HuggingFace)
+
+**Organization:** [huggingface.co/zse-zllm](https://huggingface.co/zse-zllm)
+
+Pre-converted INT4 `.zse` models ready for instant download:
+
+```bash
+zse pull qwen-0.5b     # 0.69 GB
+zse pull qwen-7b       # 5.18 GB
+zse pull qwen-72b      # 38.38 GB
+zse pull mistral-7b    # 3.86 GB
+```
+
+| Model | .zse Size | HuggingFace Repo |
+|-------|-----------|------------------|
+| Qwen2.5-0.5B-Instruct | 0.69 GB | [zse-zllm/Qwen2.5-0.5B-Instruct-zse-int4](https://huggingface.co/zse-zllm/Qwen2.5-0.5B-Instruct-zse-int4) |
+| TinyLlama-1.1B-Chat | 0.71 GB | [zse-zllm/TinyLlama-1.1B-Chat-v1.0-zse-int4](https://huggingface.co/zse-zllm/TinyLlama-1.1B-Chat-v1.0-zse-int4) |
+| Qwen2.5-1.5B-Instruct | 1.51 GB | [zse-zllm/Qwen2.5-1.5B-Instruct-zse-int4](https://huggingface.co/zse-zllm/Qwen2.5-1.5B-Instruct-zse-int4) |
+| Qwen2.5-3B-Instruct | 2.51 GB | [zse-zllm/Qwen2.5-3B-Instruct-zse-int4](https://huggingface.co/zse-zllm/Qwen2.5-3B-Instruct-zse-int4) |
+| Qwen2.5-Coder-1.5B | 1.51 GB | [zse-zllm/Qwen2.5-Coder-1.5B-Instruct-zse-int4](https://huggingface.co/zse-zllm/Qwen2.5-Coder-1.5B-Instruct-zse-int4) |
+| DeepSeek-Coder-6.7B | 3.61 GB | [zse-zllm/deepseek-coder-6.7b-instruct-zse-int4](https://huggingface.co/zse-zllm/deepseek-coder-6.7b-instruct-zse-int4) |
+| Mistral-7B-Instruct | 3.86 GB | [zse-zllm/Mistral-7B-Instruct-v0.3-zse-int4](https://huggingface.co/zse-zllm/Mistral-7B-Instruct-v0.3-zse-int4) |
+| Qwen2.5-7B-Instruct | 5.18 GB | [zse-zllm/Qwen2.5-7B-Instruct-zse-int4](https://huggingface.co/zse-zllm/Qwen2.5-7B-Instruct-zse-int4) |
+| Qwen2.5-Coder-7B | 5.18 GB | [zse-zllm/Qwen2.5-Coder-7B-Instruct-zse-int4](https://huggingface.co/zse-zllm/Qwen2.5-Coder-7B-Instruct-zse-int4) |
+| Qwen2.5-14B-Instruct | 9.26 GB | [zse-zllm/Qwen2.5-14B-Instruct-zse-int4](https://huggingface.co/zse-zllm/Qwen2.5-14B-Instruct-zse-int4) |
+| Qwen2.5-32B-Instruct | 17.9 GB | [zse-zllm/Qwen2.5-32B-Instruct-zse-int4](https://huggingface.co/zse-zllm/Qwen2.5-32B-Instruct-zse-int4) |
+| Mixtral-8x7B-Instruct | 85.14 GB | [zse-zllm/Mixtral-8x7B-Instruct-v0.1-zse-int4](https://huggingface.co/zse-zllm/Mixtral-8x7B-Instruct-v0.1-zse-int4) |
+| Qwen2.5-72B-Instruct | 38.38 GB | [zse-zllm/Qwen2.5-72B-Instruct-zse-int4](https://huggingface.co/zse-zllm/Qwen2.5-72B-Instruct-zse-int4) |
+
+---
+
 ## Project Vision
 
 - **Powerful**: Native INT4 CUDA kernels via bitsandbytes for maximum performance
@@ -302,6 +333,11 @@ zse serve qwen7b.zse  # Cold start: ~4s
 | `zse benchmark <model>` | Real inference benchmarks with tok/s and memory stats |
 | `zse convert <model> -o out.zse` | Converts to ZSE format with quantization |
 | `zse hardware` | Detects GPUs, shows VRAM, recommends viable models |
+| `zse pull <model>` | Download pre-converted .zse model (or convert locally) |
+| `zse list` | Browse available models with filters (--category, --size, --vram) |
+| `zse login` | Store HuggingFace token for gated model access |
+| `zse logout` | Remove stored HuggingFace token |
+| `zse cached` | Show locally cached .zse models and cache size |
 | `zse api-key <cmd>` | Manage API keys (create/list/delete/enable/disable) |
 | `zse` (no args) | Interactive mode - load models, chat directly |
 
