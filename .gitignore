@@ -3,6 +3,14 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Internal docs (not for repo)
+zmesh_progress.md
+ztunnel_roadmap.md
+py.txt
+website/
+zse/tee/
+zse/zcrypt/
+
 # C extensions
 *.so
 
