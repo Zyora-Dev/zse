@@ -22,7 +22,7 @@
 
 Run 32B models on 24GB GPUs. Run 7B models on 8GB GPUs. Fast cold starts, single-file deployment.
 
-## 🆕 v1.4.0: QLoRA Fine-Tuning Support
+## 🆕 v1.4.1: Model Hub + Pull Commands
 
 **Train 7B models on 8GB GPUs. Train 70B models on 48GB GPUs.**
 
@@ -108,7 +108,20 @@ pip install zllm-zse
 
 ## Quick Start
 
-### 1. Convert Model to .zse Format (One-Time)
+### 1. Pull a Pre-Converted Model (Fastest)
+
+```bash
+# Download ready-to-use .zse model (no GPU needed for conversion)
+zse pull qwen-7b          # 5.18 GB download
+zse pull mistral-7b       # 3.86 GB download
+zse pull qwen-0.5b        # 0.69 GB download
+
+# Browse available models
+zse list
+zse list --cached
+```
+
+### 2. Or Convert Model to .zse Format (One-Time)
 
 ```bash
 # Convert any HuggingFace model
@@ -266,21 +279,55 @@ print(f'{tokens} tokens in {time.time()-t0:.2f}s = {tokens/(time.time()-t0):.1f}
 ## CLI Commands
 
 ```bash
+# Pull pre-converted model (NEW in v1.4.1)
+zse pull <model>                    # e.g., zse pull qwen-7b
+
+# Browse available models (NEW in v1.4.1)
+zse list                            # All models
+zse list --cached                   # Locally cached models
+
+# HuggingFace auth for gated models (NEW in v1.4.1)
+zse login
+zse logout
+
+# Show cached models (NEW in v1.4.1)
+zse cached
+
 # Convert model
 zse convert <model_id> -o output.zse
 
 # Start server
-zse serve <model.zse> --port 8000
+zse serve <model> --port 8000       # Alias or .zse path
 
 # Interactive chat
-zse chat <model.zse>
+zse chat <model>                    # Alias or .zse path
 
 # Show model info
-zse info <model.zse>
+zse info <model>
 
 # Check hardware
 zse hardware
 ```
+
+## 🤗 Pre-Converted Models
+
+**13 models** ready for instant download from [huggingface.co/zse-zllm](https://huggingface.co/zse-zllm):
+
+| Model | Size | Pull Command |
+|-------|------|--------------|
+| Qwen2.5-0.5B-Instruct | 0.69 GB | `zse pull qwen-0.5b` |
+| TinyLlama-1.1B-Chat | 0.71 GB | `zse pull tinyllama-1.1b` |
+| Qwen2.5-1.5B-Instruct | 1.51 GB | `zse pull qwen-1.5b` |
+| Qwen2.5-3B-Instruct | 2.51 GB | `zse pull qwen-3b` |
+| Qwen2.5-Coder-1.5B | 1.51 GB | `zse pull qwen-coder-1.5b` |
+| DeepSeek-Coder-6.7B | 3.61 GB | `zse pull deepseek-6.7b` |
+| Mistral-7B-Instruct | 3.86 GB | `zse pull mistral-7b` |
+| Qwen2.5-7B-Instruct | 5.18 GB | `zse pull qwen-7b` |
+| Qwen2.5-Coder-7B | 5.18 GB | `zse pull qwen-coder-7b` |
+| Qwen2.5-14B-Instruct | 9.26 GB | `zse pull qwen-14b` |
+| Qwen2.5-32B-Instruct | 17.9 GB | `zse pull qwen-32b` |
+| Mixtral-8x7B-Instruct | 85.14 GB | `zse pull mixtral-8x7b` |
+| Qwen2.5-72B-Instruct | 38.38 GB | `zse pull qwen-72b` |
 
 ## How It Works
 
