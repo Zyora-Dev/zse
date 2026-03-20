@@ -388,6 +388,15 @@ See [deploy/DEPLOY.md](deploy/DEPLOY.md) for full deployment guide including Run
 
 Apache 2.0
 
+## Sponsors
+
+<p>This project is supported by:</p>
+<p>
+  <a href="https://www.digitalocean.com/?utm_medium=opensource&utm_source=zse">
+    <img src="https://opensource.nyc3.cdn.digitaloceanspaces.com/attribution/assets/SVG/DO_Logo_horizontal_blue.svg" width="201px" alt="DigitalOcean">
+  </a>
+</p>
+
 ## Contact
 
 - **Website:** [zllm.in](https://zllm.in)
