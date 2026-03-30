@@ -92,8 +92,15 @@ class RAGPipeline:
         if not blocks:
             raise ValueError(f"No semantic blocks extracted from {path.name}")
 
-        # Embed
-        texts = [b.content for b in blocks]
+        # Embed — contextual enrichment: prepend section hierarchy for
+        # better cross-section retrieval while storing original content
+        texts = []
+        for b in blocks:
+            section_path = (b.metadata or {}).get("section_path", "")
+            if section_path:
+                texts.append(f"{section_path} > {b.content}")
+            else:
+                texts.append(b.content)
         embeddings = self._embedder.embed(texts)
 
         # Attach embedding bytes to blocks

@@ -17,7 +17,7 @@ LLM's perspective.
 import hashlib
 import re
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from zse.core.zrag.zpf_spec import BlockType, SemanticBlock
 from zse.core.zrag.parsers import ParsedDocument, ParsedSection
@@ -431,11 +431,20 @@ class SemanticChunker:
         self._doc_abbreviations = {full: abbr for full, abbr in abbrevs}
 
         if doc.sections and len(doc.sections) > 1:
-            # Use structural sections — but skip noise sections
+            # Use structural sections — build heading hierarchy
+            heading_stack: List[Tuple[int, str]] = []  # (level, heading)
             for section in doc.sections:
                 if self._is_noise_section(section):
                     continue
-                section_blocks = self._process_section(section)
+                # Maintain heading stack based on section level
+                if section.heading:
+                    level = section.level or 1
+                    # Pop headings at same or deeper level
+                    while heading_stack and heading_stack[-1][0] >= level:
+                        heading_stack.pop()
+                    heading_stack.append((level, section.heading.strip()))
+                section_path = " > ".join(h for _, h in heading_stack)
+                section_blocks = self._process_section(section, section_path)
                 blocks.extend(section_blocks)
         else:
             # No structure — split text into semantic units
@@ -466,7 +475,9 @@ class SemanticChunker:
 
         return final_blocks
 
-    def _process_section(self, section: ParsedSection) -> List[SemanticBlock]:
+    def _process_section(
+        self, section: ParsedSection, section_path: str = ""
+    ) -> List[SemanticBlock]:
         """Process a single document section into blocks."""
         text = section.text.strip()
         if not text:
@@ -476,7 +487,7 @@ class SemanticChunker:
         if section.heading:
             text = f"{section.heading}\n{text}"
 
-        return self._split_text(text, 0)
+        return self._split_text(text, 0, section_path=section_path)
 
     def _is_noise_section(self, section: ParsedSection) -> bool:
         """Detect entire sections that are noise (Related Articles, etc.)."""
@@ -512,7 +523,9 @@ class SemanticChunker:
 
         return self._split_text(text, 0)
 
-    def _split_text(self, text: str, char_offset: int) -> List[SemanticBlock]:
+    def _split_text(
+        self, text: str, char_offset: int, section_path: str = ""
+    ) -> List[SemanticBlock]:
         """Split text into semantic blocks."""
         blocks: List[SemanticBlock] = []
 
@@ -538,6 +551,7 @@ class SemanticChunker:
                     "\n\n".join(current_parts),
                     current_start,
                     current_start + sum(len(p) for p in current_parts),
+                    section_path=section_path,
                 )
                 if block:
                     blocks.append(block)
@@ -553,6 +567,7 @@ class SemanticChunker:
                         "\n\n".join(current_parts),
                         current_start,
                         current_start + sum(len(p) for p in current_parts),
+                        section_path=section_path,
                     )
                     if block:
                         blocks.append(block)
@@ -560,7 +575,9 @@ class SemanticChunker:
                     current_tokens = 0
 
                 # Split large paragraph by sentences
-                sub_blocks = self._split_large_paragraph(para, char_offset)
+                sub_blocks = self._split_large_paragraph(
+                    para, char_offset, section_path=section_path
+                )
                 blocks.extend(sub_blocks)
                 current_start = char_offset + text.find(para) + len(para)
                 continue
@@ -574,6 +591,7 @@ class SemanticChunker:
                 "\n\n".join(current_parts),
                 current_start,
                 current_start + sum(len(p) for p in current_parts),
+                section_path=section_path,
             )
             if block:
                 blocks.append(block)
@@ -581,7 +599,7 @@ class SemanticChunker:
         return blocks
 
     def _split_large_paragraph(
-        self, text: str, char_offset: int
+        self, text: str, char_offset: int, section_path: str = ""
     ) -> List[SemanticBlock]:
         """Split an oversized paragraph by sentence boundaries."""
         # Split on sentence endings
@@ -601,6 +619,7 @@ class SemanticChunker:
                     " ".join(current_parts),
                     char_offset,
                     char_offset + sum(len(p) for p in current_parts),
+                    section_path=section_path,
                 )
                 if block:
                     blocks.append(block)
@@ -615,6 +634,7 @@ class SemanticChunker:
                 " ".join(current_parts),
                 char_offset,
                 char_offset + sum(len(p) for p in current_parts),
+                section_path=section_path,
             )
             if block:
                 blocks.append(block)
@@ -662,11 +682,12 @@ class SemanticChunker:
                 semantic_hash=_semantic_hash(part),
                 summary=_make_summary(part),
                 source_range=block.source_range,
+                metadata=dict(block.metadata) if block.metadata else {},
             ))
         return sub_blocks if sub_blocks else [block]
 
     def _make_block(
-        self, text: str, start: int, end: int
+        self, text: str, start: int, end: int, section_path: str = ""
     ) -> Optional[SemanticBlock]:
         """Create a semantic block from text."""
         block_type = _detect_block_type(text)
@@ -693,6 +714,10 @@ class SemanticChunker:
         token_count = _estimate_tokens(compressed)
         summary = _make_summary(compressed)
 
+        block_metadata: Dict[str, Any] = {}
+        if section_path:
+            block_metadata["section_path"] = section_path
+
         return SemanticBlock(
             block_type=block_type,
             content=compressed,
@@ -700,4 +725,5 @@ class SemanticChunker:
             semantic_hash=_semantic_hash(compressed),
             summary=summary,
             source_range=(start, end),
+            metadata=block_metadata,
         )
