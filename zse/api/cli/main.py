@@ -2509,3 +2509,358 @@ def cached() -> None:
     console.print(table)
     console.print(f"\n[bold]Cache directory:[/bold] {cache.cache_dir}")
     console.print(f"[bold]Total size:[/bold] {cache.cache_size_gb():.2f} GB")
+
+
+# =============================================================================
+# RAG Commands — Built-in RAG with .zpf format
+# =============================================================================
+
+rag_app = typer.Typer(
+    name="rag",
+    help="Built-in RAG: ingest documents, search, and manage .zpf files",
+    no_args_is_help=True,
+)
+app.add_typer(rag_app, name="rag")
+
+
+@rag_app.command(name="add")
+def rag_add(
+    file_path: Annotated[
+        str,
+        typer.Argument(help="Path to document (PDF, DOCX, HTML, TXT, CSV, JSON, MD, or .zpf)"),
+    ],
+    title: Annotated[
+        Optional[str],
+        typer.Option("--title", "-t", help="Document title (auto-detected if omitted)"),
+    ] = None,
+) -> None:
+    """Ingest a document into the RAG store with .zpf semantic compression."""
+    from zse.core.zrag.pipeline import get_rag_pipeline
+
+    p = Path(file_path)
+    if not p.exists():
+        console.print(f"[red]File not found: {file_path}[/red]")
+        raise typer.Exit(1)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        progress.add_task(f"Ingesting {p.name}...", total=None)
+        pipeline = get_rag_pipeline()
+
+        if p.suffix.lower() == ".zpf":
+            doc_id = pipeline.ingest_zpf(str(p))
+        else:
+            doc_id = pipeline.ingest(str(p), title=title)
+
+    console.print(f"[green]✅ Ingested:[/green] {p.name}")
+    console.print(f"[dim]   doc_id: {doc_id}[/dim]")
+
+
+@rag_app.command(name="search")
+def rag_search(
+    query: Annotated[
+        str,
+        typer.Argument(help="Search query"),
+    ],
+    top_k: Annotated[
+        int,
+        typer.Option("--top-k", "-k", help="Number of results"),
+    ] = 5,
+    doc_id: Annotated[
+        Optional[str],
+        typer.Option("--doc", "-d", help="Filter by document ID"),
+    ] = None,
+) -> None:
+    """Semantic search across ingested documents."""
+    from zse.core.zrag.pipeline import get_rag_pipeline
+    from zse.core.zrag.zpf_spec import BlockType
+
+    pipeline = get_rag_pipeline()
+    results = pipeline.search(query, top_k=top_k, doc_filter=doc_id)
+
+    if not results:
+        console.print("[yellow]No results found.[/yellow]")
+        return
+
+    for i, r in enumerate(results, 1):
+        btype = BlockType(r.block_type).name if r.block_type <= 10 else "TEXT"
+        preview = r.content[:200].replace("\n", " ")
+        console.print(
+            f"\n[bold cyan]{i}.[/bold cyan] "
+            f"[yellow][{btype}][/yellow] "
+            f"score={r.score:.3f}  doc={r.doc_id}"
+        )
+        if r.summary:
+            console.print(f"   [dim]{r.summary}[/dim]")
+        console.print(f"   {preview}{'...' if len(r.content) > 200 else ''}")
+
+
+@rag_app.command(name="context")
+def rag_context(
+    query: Annotated[
+        str,
+        typer.Argument(help="Query to build context for"),
+    ],
+    max_tokens: Annotated[
+        int,
+        typer.Option("--max-tokens", "-m", help="Max tokens in context"),
+    ] = 2000,
+) -> None:
+    """Get LLM-ready context from the RAG store."""
+    from zse.core.zrag.pipeline import get_rag_pipeline
+
+    pipeline = get_rag_pipeline()
+    ctx = pipeline.get_context(query, max_tokens=max_tokens)
+
+    if not ctx:
+        console.print("[yellow]No relevant context found.[/yellow]")
+        return
+
+    console.print(Panel(ctx, title="[bold cyan]RAG Context[/bold cyan]", border_style="blue"))
+
+
+@rag_app.command(name="list")
+def rag_list() -> None:
+    """List all documents in the RAG store."""
+    from zse.core.zrag.pipeline import get_rag_pipeline
+
+    pipeline = get_rag_pipeline()
+    docs = pipeline.list_documents()
+
+    if not docs:
+        console.print("[yellow]No documents in RAG store.[/yellow]")
+        console.print("[dim]Use 'zse rag add <file>' to ingest documents.[/dim]")
+        return
+
+    table = Table(
+        title="[bold cyan]RAG Documents[/bold cyan]",
+        box=box.ROUNDED,
+        show_header=True,
+        header_style="bold magenta",
+    )
+    table.add_column("Doc ID", style="cyan", width=18)
+    table.add_column("Blocks", style="green", justify="right", width=8)
+    table.add_column("Tokens", style="yellow", justify="right", width=10)
+
+    for d in docs:
+        table.add_row(
+            d["doc_id"],
+            str(d["block_count"]),
+            str(d["total_tokens"]),
+        )
+
+    console.print(table)
+    console.print(f"\n[bold]Total:[/bold] {len(docs)} documents, {pipeline.stats['total_blocks']} blocks")
+
+
+@rag_app.command(name="remove")
+def rag_remove(
+    doc_id: Annotated[
+        str,
+        typer.Argument(help="Document ID to remove"),
+    ],
+) -> None:
+    """Remove a document from the RAG store."""
+    from zse.core.zrag.pipeline import get_rag_pipeline
+
+    pipeline = get_rag_pipeline()
+    removed = pipeline.remove(doc_id)
+
+    if removed > 0:
+        console.print(f"[green]✅ Removed {removed} blocks for doc {doc_id}[/green]")
+    else:
+        console.print(f"[yellow]No document found with ID: {doc_id}[/yellow]")
+
+
+@rag_app.command(name="convert")
+def rag_convert(
+    file_path: Annotated[
+        str,
+        typer.Argument(help="File to convert to .zpf"),
+    ],
+    output: Annotated[
+        Optional[str],
+        typer.Option("--output", "-o", help="Output .zpf path"),
+    ] = None,
+    title: Annotated[
+        Optional[str],
+        typer.Option("--title", "-t", help="Document title"),
+    ] = None,
+) -> None:
+    """Convert a document to .zpf format (without adding to RAG store)."""
+    from zse.core.zrag.pipeline import get_rag_pipeline
+
+    p = Path(file_path)
+    if not p.exists():
+        console.print(f"[red]File not found: {file_path}[/red]")
+        raise typer.Exit(1)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        progress.add_task(f"Converting {p.name} → .zpf...", total=None)
+        pipeline = get_rag_pipeline()
+        out = pipeline.convert(str(p), output_path=output, title=title)
+
+    console.print(f"[green]✅ Converted:[/green] {out}")
+
+    # Show stats
+    info = pipeline.inspect_zpf(out)
+    console.print(f"   Blocks: {info['block_count']}, Tokens: {info['total_tokens']}")
+    console.print(f"   Compression: {info['compression_ratio']}x, Token efficiency: {info['token_efficiency']}")
+
+
+@rag_app.command(name="inspect")
+def rag_inspect(
+    zpf_path: Annotated[
+        str,
+        typer.Argument(help="Path to .zpf file"),
+    ],
+) -> None:
+    """Inspect a .zpf file — show metadata and block summaries."""
+    from zse.core.zrag.pipeline import get_rag_pipeline
+
+    p = Path(zpf_path)
+    if not p.exists() or p.suffix.lower() != ".zpf":
+        console.print(f"[red]Not a valid .zpf file: {zpf_path}[/red]")
+        raise typer.Exit(1)
+
+    pipeline = get_rag_pipeline()
+    info = pipeline.inspect_zpf(str(p))
+
+    console.print(Panel(
+        f"[bold]Title:[/bold] {info['title']}\n"
+        f"[bold]Doc ID:[/bold] {info['doc_id']}\n"
+        f"[bold]Source:[/bold] {info['source_type']}\n"
+        f"[bold]Created:[/bold] {info['created_at']}\n"
+        f"[bold]Blocks:[/bold] {info['block_count']}\n"
+        f"[bold]Tokens:[/bold] {info['total_tokens']}\n"
+        f"[bold]Original:[/bold] {info['original_size']:,} bytes\n"
+        f"[bold]Compressed:[/bold] {info['compressed_size']:,} bytes\n"
+        f"[bold]Compression:[/bold] {info['compression_ratio']}x\n"
+        f"[bold]Token Efficiency:[/bold] {info['token_efficiency']}\n"
+        f"[bold]Embedding:[/bold] {info.get('embedding_model', '?')} ({info.get('embedding_dim', '?')}d)",
+        title=f"[bold cyan]📄 {p.name}[/bold cyan]",
+        border_style="blue",
+    ))
+
+    if info.get("blocks"):
+        table = Table(
+            title="[bold]Semantic Blocks[/bold]",
+            box=box.SIMPLE,
+            show_header=True,
+            header_style="bold",
+        )
+        table.add_column("#", style="dim", width=4)
+        table.add_column("Type", style="yellow", width=12)
+        table.add_column("Tokens", justify="right", width=8)
+        table.add_column("Summary", style="dim")
+
+        for blk in info["blocks"]:
+            table.add_row(
+                str(blk["idx"]),
+                blk["block_type"],
+                str(blk["token_count"]),
+                blk.get("summary", "")[:60],
+            )
+
+        console.print(table)
+
+
+@rag_app.command(name="stats")
+def rag_stats() -> None:
+    """Show RAG store statistics."""
+    from zse.core.zrag.pipeline import get_rag_pipeline
+
+    pipeline = get_rag_pipeline()
+    s = pipeline.stats
+
+    console.print(Panel(
+        f"[bold]Documents:[/bold] {s['total_documents']}\n"
+        f"[bold]Blocks:[/bold] {s['total_blocks']}\n"
+        f"[bold]Embedding Model:[/bold] {s['embedding_model']}\n"
+        f"[bold]Embedding Dim:[/bold] {s['embedding_dim']}\n"
+        f"[bold]Store:[/bold] {s['store_dir']}\n"
+        f"[bold]ZPF Dir:[/bold] {s['zpf_dir']}",
+        title="[bold cyan]RAG Store Stats[/bold cyan]",
+        border_style="blue",
+    ))
+
+
+@rag_app.command(name="export")
+def rag_export(
+    zpf_path: Annotated[
+        str,
+        typer.Argument(help="Path to .zpf file to export"),
+    ],
+    output: Annotated[
+        Optional[str],
+        typer.Option("--output", "-o", help="Output file path"),
+    ] = None,
+    fmt: Annotated[
+        str,
+        typer.Option("--format", "-f", help="Export format: jsonl, markdown, json"),
+    ] = "jsonl",
+) -> None:
+    """Export a .zpf file to an open format (JSONL, Markdown, JSON).
+
+    Zero vendor lock-in — your data is always portable.
+    """
+    from zse.core.zrag.pipeline import get_rag_pipeline
+
+    p = Path(zpf_path)
+    if not p.exists() or p.suffix.lower() != ".zpf":
+        console.print(f"[red]Not a valid .zpf file: {zpf_path}[/red]")
+        raise typer.Exit(1)
+
+    ext_map = {"jsonl": ".jsonl", "markdown": ".md", "json": ".json"}
+    if fmt not in ext_map:
+        console.print(f"[red]Unsupported format: {fmt}. Use: jsonl, markdown, json[/red]")
+        raise typer.Exit(1)
+
+    if not output:
+        output = str(p.with_suffix(ext_map[fmt]))
+
+    pipeline = get_rag_pipeline()
+    result = pipeline.export_zpf(str(p), output, format=fmt)
+    console.print(f"[green]✅ Exported:[/green] {result}")
+    console.print(f"[dim]   Format: {fmt} — fully portable, no .zpf dependency[/dim]")
+
+
+@rag_app.command(name="reindex")
+def rag_reindex(
+    model: Annotated[
+        Optional[str],
+        typer.Option("--model", "-m", help="New embedding model (e.g. all-MiniLM-L6-v2)"),
+    ] = None,
+) -> None:
+    """Re-embed all documents with a new (or same) embedding model.
+
+    Use this when upgrading your embedding model — all .zpf files
+    and the vector store are updated in one command.
+    """
+    from zse.core.zrag.pipeline import get_rag_pipeline
+
+    pipeline = get_rag_pipeline()
+    current = pipeline.stats["embedding_model"]
+
+    if model:
+        console.print(f"[cyan]Switching embedding model: {current} → {model}[/cyan]")
+    else:
+        console.print(f"[cyan]Re-indexing with current model: {current}[/cyan]")
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        progress.add_task("Re-indexing all .zpf files...", total=None)
+        result = pipeline.reindex(embedding_model=model)
+
+    console.print(f"[green]✅ Re-indexed {result['reindexed']}/{result['total_files']} files[/green]")
+    console.print(f"   Blocks: {result['blocks']}, Model: {result['model']}")

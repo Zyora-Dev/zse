@@ -21,6 +21,7 @@ from zse.api.server.auth import verify_api_key, get_key_manager, APIKey
 from zse.api.server.audit import add_audit_middleware, get_audit_logger
 from zse.api.server.chat_routes import router as chat_router
 from zse.api.server.rag_routes import router as rag_router
+from zse.api.server.zpf_routes import zpf_router
 from zse.api.server.mcp_routes import router as mcp_router
 
 from zse.api.server.models import (
@@ -105,6 +106,9 @@ def create_app() -> FastAPI:
     
     # Include RAG API router
     app.include_router(rag_router)
+    
+    # Include ZPF RAG API router
+    app.include_router(zpf_router)
     
     # Include MCP/Tools API router
     app.include_router(mcp_router)
