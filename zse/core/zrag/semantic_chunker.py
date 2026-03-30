@@ -511,17 +511,12 @@ class SemanticChunker:
         if not lines:
             return True
         noise_count = sum(1 for l in lines if _is_noise(l))
-        if len(lines) > 0 and noise_count / len(lines) > 0.7:
+        # Only drop if section is almost entirely noise (>90%).
+        # Lower thresholds (e.g. 70%) falsely drop real content sections
+        # that happen to have footer noise appended (last section problem).
+        if len(lines) > 0 and noise_count / len(lines) > 0.9:
             return True
         return False
-        if not text:
-            return []
-
-        # Prepend heading as context if available
-        if section.heading:
-            text = f"{section.heading}\n{text}"
-
-        return self._split_text(text, 0)
 
     def _split_text(
         self, text: str, char_offset: int, section_path: str = ""
