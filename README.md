@@ -485,7 +485,7 @@ docker run --gpus all -p 8000:8000 ghcr.io/zyora-dev/zse:gpu
 docker run -p 8000:8000 -e ZSE_MODEL=Qwen/Qwen2.5-0.5B-Instruct ghcr.io/zyora-dev/zse:latest
 ```
 
-See the deployment guide for full instructions including Runpod, Vast.ai, Railway, Render, and Kubernetes.
+See [deploy/DEPLOY.md](deploy/DEPLOY.md) for full deployment guide including Runpod, Vast.ai, Railway, Render, and Kubernetes.
 
 ## License
 
