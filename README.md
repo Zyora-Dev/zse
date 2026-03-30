@@ -241,8 +241,6 @@ context = pipeline.get_context("What is transfer learning?", max_tokens=500)
 3. **Contextual embedding** — each block embeds with parent section hierarchy for cross-section retrieval
 4. **Hybrid retrieval** — 0.6× embedding similarity + 0.4× BM25, with size normalization, block-type boosting, and identifier-aware scoring
 
-See [progress.md](progress.md) for full benchmarks and technical details.
-
 ## Multi-GPU: Tensor Parallelism & Pipeline Parallelism
 
 Run models across multiple GPUs to reduce per-GPU VRAM or serve larger models.
@@ -487,7 +485,7 @@ docker run --gpus all -p 8000:8000 ghcr.io/zyora-dev/zse:gpu
 docker run -p 8000:8000 -e ZSE_MODEL=Qwen/Qwen2.5-0.5B-Instruct ghcr.io/zyora-dev/zse:latest
 ```
 
-See [deploy/DEPLOY.md](deploy/DEPLOY.md) for full deployment guide including Runpod, Vast.ai, Railway, Render, and Kubernetes.
+See the deployment guide for full instructions including Runpod, Vast.ai, Railway, Render, and Kubernetes.
 
 ## License
 
