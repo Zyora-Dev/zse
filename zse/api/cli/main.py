@@ -524,6 +524,9 @@ def _run_server(
     efficiency: EfficiencyMode,
     max_memory: Optional[str],
     device: str = "auto",
+    draft_model: Optional[str] = None,
+    tensor_parallel: int = 1,
+    pipeline_parallel: int = 1,
 ) -> None:
     """Actually run the server."""
     try:
@@ -534,6 +537,8 @@ def _run_server(
         # Resolve model from cache
         if model:
             model = _resolve_model(model)
+        if draft_model:
+            draft_model = _resolve_model(draft_model)
         
         console.print("[cyan]Initializing ZSE engine...[/cyan]")
         
@@ -551,12 +556,38 @@ def _run_server(
                 task = progress.add_task("[cyan]Loading model...", total=None)
                 
                 try:
-                    if target_vram:
-                        orchestrator = IntelligenceOrchestrator.for_vram(target_vram, model, device=device)
+                    tp_size = tensor_parallel if tensor_parallel > 1 else 0
+                    pp_size = pipeline_parallel if pipeline_parallel > 1 else 0
+                    if tp_size > 1 and pp_size > 1:
+                        orchestrator = IntelligenceOrchestrator(
+                            model, quantization=quant if quant != "auto" else "auto",
+                            device=device, multi_gpu=True, draft_model=draft_model,
+                            tp_size=tp_size, pp_size=pp_size,
+                        )
+                    elif tp_size > 1:
+                        orchestrator = IntelligenceOrchestrator(
+                            model, quantization=quant if quant != "auto" else "auto",
+                            device=device, multi_gpu=True, draft_model=draft_model,
+                            tp_size=tp_size,
+                        )
+                    elif pp_size > 1:
+                        orchestrator = IntelligenceOrchestrator(
+                            model, quantization=quant if quant != "auto" else "auto",
+                            device=device, multi_gpu=True, draft_model=draft_model,
+                            pp_size=pp_size,
+                        )
+                    elif cpu_offload:
+                        orchestrator = IntelligenceOrchestrator(
+                            model, quantization=quant if quant != "auto" else "fp16",
+                            device=device, draft_model=draft_model,
+                            cpu_offload=True,
+                        )
+                    elif target_vram:
+                        orchestrator = IntelligenceOrchestrator.for_vram(target_vram, model, device=device, draft_model=draft_model)
                     elif quant != "auto":
-                        orchestrator = IntelligenceOrchestrator(model, quantization=quant, device=device)
+                        orchestrator = IntelligenceOrchestrator(model, quantization=quant, device=device, draft_model=draft_model)
                     else:
-                        orchestrator = IntelligenceOrchestrator.auto(model, device=device)
+                        orchestrator = IntelligenceOrchestrator.auto(model, device=device, draft_model=draft_model)
                     
                     orchestrator.load(verbose=False)
                     progress.update(task, description="[green]Model loaded!")
@@ -647,6 +678,10 @@ def serve(
         int,
         typer.Option("--tensor-parallel", "-tp", help="Number of GPUs for tensor parallelism"),
     ] = 1,
+    pipeline_parallel: Annotated[
+        int,
+        typer.Option("--pipeline-parallel", "-pp", help="Number of GPUs for pipeline parallelism"),
+    ] = 1,
     cpu_offload: Annotated[
         bool,
         typer.Option("--cpu-offload", help="Enable CPU offloading for large models"),
@@ -667,6 +702,10 @@ def serve(
         Optional[Path],
         typer.Option("--config", "-c", help="Path to configuration file"),
     ] = None,
+    draft: Annotated[
+        Optional[str],
+        typer.Option("--draft", help="Draft model for speculative decoding (e.g., qwen-0.5b)"),
+    ] = None,
 ) -> None:
     """
     Start the ZSE inference server.
@@ -677,14 +716,17 @@ def serve(
         zse serve ./model.zse --max-memory 16GB
         zse serve mistral-7b --efficiency ultra --recommend
         zse serve qwen-0.5b --device cpu   # Run on CPU only
+        zse serve qwen-7b --draft qwen-0.5b   # Speculative decoding
     """
     show_banner()
     
     if model:
+        draft_info = f"\n[bold]Draft Model:[/bold] [magenta]{draft}[/magenta]" if draft else ""
         console.print(Panel.fit(
             f"[bold]Model:[/bold] [green]{model}[/green]\n"
             f"[bold]Efficiency:[/bold] [yellow]{efficiency.value}[/yellow]\n"
-            f"[bold]Address:[/bold] [blue]http://{host}:{port}[/blue]",
+            f"[bold]Address:[/bold] [blue]http://{host}:{port}[/blue]"
+            f"{draft_info}",
             title="[bold blue]🚀 Starting ZSE Server[/bold blue]",
             border_style="blue",
         ))
@@ -703,7 +745,7 @@ def serve(
             border_style="blue",
         ))
     
-    _run_server(model, host, port, efficiency, max_memory, device)
+    _run_server(model, host, port, efficiency, max_memory, device, draft, tensor_parallel, pipeline_parallel)
 
 
 def _run_chat_session(
@@ -711,12 +753,15 @@ def _run_chat_session(
     efficiency: EfficiencyMode,
     max_memory: Optional[str],
     system_prompt: Optional[str],
+    draft_model: Optional[str] = None,
 ) -> None:
     """Run an actual chat session with the model."""
     from zse.engine.orchestrator.core import IntelligenceOrchestrator
     
     # Resolve model from cache
     model = _resolve_model(model)
+    if draft_model:
+        draft_model = _resolve_model(draft_model)
     
     quant = _efficiency_to_quantization(efficiency)
     target_vram = _parse_memory_str(max_memory)
@@ -735,11 +780,11 @@ def _run_chat_session(
             progress.update(task, advance=20, description="[cyan]Initializing orchestrator...")
             
             if target_vram:
-                orchestrator = IntelligenceOrchestrator.for_vram(target_vram, model)
+                orchestrator = IntelligenceOrchestrator.for_vram(target_vram, model, draft_model=draft_model)
             elif quant != "auto":
-                orchestrator = IntelligenceOrchestrator(model, quantization=quant)
+                orchestrator = IntelligenceOrchestrator(model, quantization=quant, draft_model=draft_model)
             else:
-                orchestrator = IntelligenceOrchestrator.auto(model)
+                orchestrator = IntelligenceOrchestrator.auto(model, draft_model=draft_model)
             
             progress.update(task, advance=30, description="[cyan]Loading model weights...")
             orchestrator.load(verbose=False)
@@ -883,6 +928,10 @@ def chat(
         Optional[str],
         typer.Option("--system", "-s", help="System prompt"),
     ] = None,
+    draft: Annotated[
+        Optional[str],
+        typer.Option("--draft", help="Draft model for speculative decoding (e.g., qwen-0.5b)"),
+    ] = None,
 ) -> None:
     """
     Start an interactive chat session.
@@ -890,18 +939,21 @@ def chat(
     Examples:
         zse chat meta-llama/Llama-3-8B
         zse chat ./model.zse --system "You are a helpful assistant"
+        zse chat qwen-7b --draft qwen-0.5b       # 2-3x faster with speculation
     """
     show_banner()
     
+    draft_info = f"\n[bold]Draft Model:[/bold] [magenta]{draft}[/magenta]" if draft else ""
     console.print(Panel.fit(
         f"[bold]Model:[/bold] [green]{model}[/green]\n"
-        f"[bold]Efficiency:[/bold] [yellow]{efficiency.value}[/yellow]\n"
+        f"[bold]Efficiency:[/bold] [yellow]{efficiency.value}[/yellow]"
+        f"{draft_info}\n"
         f"[dim]Type 'exit' to quit, 'clear' to reset, 'stats' for info[/dim]",
         title="[bold blue]💬 ZSE Chat[/bold blue]",
         border_style="blue",
     ))
     
-    _run_chat_session(model, efficiency, max_memory, system_prompt)
+    _run_chat_session(model, efficiency, max_memory, system_prompt, draft_model=draft)
 
 
 @app.command()

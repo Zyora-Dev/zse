@@ -120,9 +120,15 @@ class SpeculativeDecoder:
         self.target_device = target_device
         self.draft_device = draft_device or target_device
         
-        # Move models to devices
-        self.target_model = self.target_model.to(target_device)
-        self.draft_model = self.draft_model.to(self.draft_device)
+        # Move models to devices (skip if already placed, e.g. bnb quantized)
+        try:
+            self.target_model = self.target_model.to(target_device)
+        except Exception:
+            pass  # Already on device (e.g. bitsandbytes quantized)
+        try:
+            self.draft_model = self.draft_model.to(self.draft_device)
+        except Exception:
+            pass
         
         # Set to eval mode
         self.target_model.eval()
@@ -152,7 +158,7 @@ class SpeculativeDecoder:
         num_tokens: int,
         temperature: float = 1.0,
         past_key_values: Optional[Any] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor, Any]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor], Any]:
         """
         Generate draft tokens using the small model.
         
@@ -163,10 +169,11 @@ class SpeculativeDecoder:
             past_key_values: KV cache from previous steps
             
         Returns:
-            (draft_tokens, draft_probs, new_past_key_values)
+            (draft_tokens, draft_token_probs, draft_full_probs, new_past_key_values)
         """
         draft_tokens = []
-        draft_probs = []
+        draft_token_probs = []
+        draft_full_probs = []
         
         current_input = input_ids.to(self.draft_device)
         current_past = past_key_values
@@ -192,22 +199,23 @@ class SpeculativeDecoder:
                     probs = F.softmax(logits, dim=-1)
                 
                 draft_tokens.append(next_token)
-                # Store probability of sampled token
-                draft_probs.append(probs.gather(1, next_token))
+                draft_token_probs.append(probs.gather(1, next_token))
+                draft_full_probs.append(probs)  # Full distribution for rejection resampling
                 
                 current_input = torch.cat([current_input, next_token], dim=-1)
         
         # Stack results
-        draft_tokens = torch.cat(draft_tokens, dim=1)  # [batch, num_tokens]
-        draft_probs = torch.cat(draft_probs, dim=1)    # [batch, num_tokens]
+        draft_tokens = torch.cat(draft_tokens, dim=1)       # [batch, num_tokens]
+        draft_token_probs = torch.cat(draft_token_probs, dim=1)  # [batch, num_tokens]
         
-        return draft_tokens, draft_probs, current_past
+        return draft_tokens, draft_token_probs, draft_full_probs, current_past
     
     def _verify_tokens(
         self,
         input_ids: torch.Tensor,
         draft_tokens: torch.Tensor,
-        draft_probs: torch.Tensor,
+        draft_token_probs: torch.Tensor,
+        draft_full_probs: List[torch.Tensor],
         temperature: float = 1.0,
         past_key_values: Optional[Any] = None,
     ) -> Tuple[torch.Tensor, int, Any]:
@@ -220,7 +228,8 @@ class SpeculativeDecoder:
         Args:
             input_ids: Original input sequence
             draft_tokens: Draft tokens to verify [batch, k]
-            draft_probs: Draft model probabilities [batch, k]
+            draft_token_probs: Draft model prob of sampled token [batch, k]
+            draft_full_probs: Full draft distributions per position
             temperature: Sampling temperature
             past_key_values: Target model KV cache
             
@@ -266,7 +275,7 @@ class SpeculativeDecoder:
             
             # Target prob of draft token at this position
             target_p = target_probs[:, i, :].gather(1, draft_token.to(self.target_device))
-            draft_p = draft_probs[:, i:i+1].to(self.target_device)
+            draft_p = draft_token_probs[:, i:i+1].to(self.target_device)
             
             # Acceptance probability: min(1, target_p / draft_p)
             acceptance_prob = torch.clamp(target_p / (draft_p + 1e-10), max=1.0)
@@ -280,20 +289,27 @@ class SpeculativeDecoder:
                 num_accepted += 1
             else:
                 # Rejection - resample from adjusted distribution
-                # p_adjusted = max(0, target_p - draft_p) / Z
-                adjusted = F.relu(target_probs[:, i, :] - F.softmax(
-                    self.draft_model(
-                        input_ids=torch.cat([input_ids.to(self.draft_device)] + 
-                                           [t.to(self.draft_device) for t in accepted_tokens], dim=1)
-                        if accepted_tokens else input_ids.to(self.draft_device),
-                        use_cache=False,
-                    ).logits[:, -1, :].to(self.target_device) / temperature, dim=-1))
+                # Use stored draft probs (no redundant draft forward pass)
+                # p_adjusted = max(0, target_p(x) - draft_p(x)) / Z
+                draft_dist = draft_full_probs[i].to(self.target_device)
+                target_dist = target_probs[:, i, :]
+                
+                # Handle vocab size mismatch (draft may have smaller vocab)
+                target_vocab = target_dist.shape[-1]
+                draft_vocab = draft_dist.shape[-1]
+                if draft_vocab < target_vocab:
+                    draft_dist = F.pad(draft_dist, (0, target_vocab - draft_vocab), value=0.0)
+                elif draft_vocab > target_vocab:
+                    draft_dist = draft_dist[:, :target_vocab]
+                
+                adjusted = F.relu(target_dist - draft_dist)
                 
                 # Normalize
-                adjusted = adjusted / (adjusted.sum(dim=-1, keepdim=True) + 1e-10)
+                adjusted_sum = adjusted.sum(dim=-1, keepdim=True)
                 
                 # Resample
-                if adjusted.sum() > 0:
+                if (adjusted_sum > 0).all():
+                    adjusted = adjusted / (adjusted_sum + 1e-10)
                     resampled = torch.multinomial(adjusted, num_samples=1)
                 else:
                     # Fallback to target distribution
@@ -331,6 +347,42 @@ class SpeculativeDecoder:
             # Low acceptance - try fewer tokens
             self._adaptive_k -= 1
     
+    @staticmethod
+    def _truncate_kv_cache(
+        past_key_values: Any,
+        keep_len: int,
+    ) -> Any:
+        """
+        Truncate KV cache to keep_len positions.
+        
+        Supports:
+        - Legacy tuple format: tuple of (key, value) per layer
+        - DynamicCache (transformers 4.x): .key_cache / .value_cache lists
+        - DynamicCache (transformers 5.x): .layers list with .keys / .values
+        """
+        if past_key_values is None:
+            return None
+        
+        # DynamicCache (transformers 5.x) — .layers with .keys/.values
+        if hasattr(past_key_values, 'layers'):
+            for layer in past_key_values.layers:
+                layer.keys = layer.keys[:, :, :keep_len, :]
+                layer.values = layer.values[:, :, :keep_len, :]
+            return past_key_values
+        
+        # DynamicCache (transformers 4.x) — .key_cache/.value_cache lists
+        if hasattr(past_key_values, 'key_cache'):
+            for i in range(len(past_key_values.key_cache)):
+                past_key_values.key_cache[i] = past_key_values.key_cache[i][:, :, :keep_len, :]
+                past_key_values.value_cache[i] = past_key_values.value_cache[i][:, :, :keep_len, :]
+            return past_key_values
+        
+        # Legacy tuple format
+        return tuple(
+            (k[:, :, :keep_len, :], v[:, :, :keep_len, :])
+            for k, v in past_key_values
+        )
+    
     def speculative_step(
         self,
         input_ids: torch.Tensor,
@@ -351,10 +403,11 @@ class SpeculativeDecoder:
             (output, new_draft_past, new_target_past)
         """
         start_time = time.perf_counter()
+        seq_len = input_ids.shape[1]
         
         # Draft phase
         draft_start = time.perf_counter()
-        draft_tokens, draft_probs, new_draft_past = self._draft_generate(
+        draft_tokens, draft_token_probs, draft_full_probs, new_draft_past = self._draft_generate(
             input_ids,
             num_tokens=self._adaptive_k,
             temperature=temperature,
@@ -367,13 +420,37 @@ class SpeculativeDecoder:
         accepted_tokens, num_accepted, new_target_past = self._verify_tokens(
             input_ids,
             draft_tokens,
-            draft_probs,
+            draft_token_probs,
+            draft_full_probs,
             temperature=temperature,
             past_key_values=target_past,
         )
         verify_time = (time.perf_counter() - verify_start) * 1000
         
         total_time = (time.perf_counter() - start_time) * 1000
+        
+        # Truncate KV caches to match actual accepted tokens.
+        # After verification, the caches have entries for all draft tokens,
+        # but only num_accepted were actually kept. Stale entries would corrupt
+        # subsequent steps.
+        accepted_len = seq_len + num_accepted
+        all_accepted = (num_accepted == self._adaptive_k + 1)
+        
+        if all_accepted:
+            # All tokens accepted (including bonus) — caches are consistent
+            pass
+        else:
+            # Had a rejection — truncate target cache.
+            # Draft cache: truncate to seq_len + (num_accepted - 1) because
+            # the last accepted token is the resampled one from the target
+            # distribution, which the draft model never generated.
+            try:
+                new_target_past = self._truncate_kv_cache(new_target_past, accepted_len)
+                new_draft_past = self._truncate_kv_cache(new_draft_past, accepted_len - 1) if num_accepted > 0 else draft_past
+            except Exception:
+                # If truncation fails (unusual cache format), invalidate
+                new_target_past = None
+                new_draft_past = None
         
         # Calculate acceptance rate
         acceptance_rate = num_accepted / (self._adaptive_k + 1)

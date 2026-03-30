@@ -107,6 +107,10 @@ class IntelligenceOrchestrator:
         device: str = "auto",
         multi_gpu: bool = False,
         gpu_ids: Optional[list] = None,
+        draft_model: Optional[str] = None,
+        tp_size: int = 1,
+        pp_size: int = 1,
+        cpu_offload: bool = False,
     ):
         """
         Initialize orchestrator.
@@ -118,11 +122,19 @@ class IntelligenceOrchestrator:
             device: Target device ("auto", "cuda", "cpu", or "cuda:N")
             multi_gpu: Enable multi-GPU tensor parallelism
             gpu_ids: Specific GPU IDs to use (e.g., [0, 1, 2])
+            draft_model: Draft model for speculative decoding (HF ID, path, or .zse)
+            tp_size: Number of GPUs for tensor parallelism (1 = disabled)
+            pp_size: Number of GPUs for pipeline parallelism (1 = disabled)
+            cpu_offload: Enable hybrid CPU offloading (stream layers from CPU)
         """
         self.model_name = model_name
         self.target_vram_gb = target_vram_gb
         self._multi_gpu = multi_gpu
         self._gpu_ids = gpu_ids
+        self._draft_model_name = draft_model
+        self._tp_size = tp_size if tp_size > 1 else (len(gpu_ids) if gpu_ids else 0)
+        self._pp_size = pp_size if pp_size > 1 else 0
+        self._cpu_offload = cpu_offload
         
         # Resolve "auto" device
         if device == "auto":
@@ -167,17 +179,17 @@ class IntelligenceOrchestrator:
         self._config = None
         
     @classmethod
-    def auto(cls, model_name: str, device: str = "auto") -> "IntelligenceOrchestrator":
+    def auto(cls, model_name: str, device: str = "auto", draft_model: Optional[str] = None) -> "IntelligenceOrchestrator":
         """
         Create orchestrator with auto-detected optimal configuration.
         
         Detects available VRAM and selects best quantization.
         Auto-detects GPU/CPU if device='auto'.
         """
-        return cls(model_name, quantization="auto", device=device)
+        return cls(model_name, quantization="auto", device=device, draft_model=draft_model)
     
     @classmethod
-    def for_vram(cls, vram_gb: float, model_name: str, device: str = "auto") -> "IntelligenceOrchestrator":
+    def for_vram(cls, vram_gb: float, model_name: str, device: str = "auto", draft_model: Optional[str] = None) -> "IntelligenceOrchestrator":
         """
         Create orchestrator optimized for specific VRAM budget.
         
@@ -185,34 +197,34 @@ class IntelligenceOrchestrator:
             vram_gb: Available VRAM in GB
             model_name: Model to load
         """
-        return cls(model_name, quantization="auto", target_vram_gb=vram_gb, device=device)
+        return cls(model_name, quantization="auto", target_vram_gb=vram_gb, device=device, draft_model=draft_model)
     
     @classmethod
-    def min_memory(cls, model_name: str, device: str = "auto") -> "IntelligenceOrchestrator":
+    def min_memory(cls, model_name: str, device: str = "auto", draft_model: Optional[str] = None) -> "IntelligenceOrchestrator":
         """
         Create orchestrator with minimum memory (INT4 on GPU, FP32 on CPU).
         
         Best for: Limited VRAM, willing to sacrifice speed.
         """
-        return cls(model_name, quantization="int4", device=device)
+        return cls(model_name, quantization="int4", device=device, draft_model=draft_model)
     
     @classmethod
-    def max_speed(cls, model_name: str, device: str = "auto") -> "IntelligenceOrchestrator":
+    def max_speed(cls, model_name: str, device: str = "auto", draft_model: Optional[str] = None) -> "IntelligenceOrchestrator":
         """
         Create orchestrator with maximum speed (FP16).
         
         Best for: Abundant VRAM, want fastest inference.
         """
-        return cls(model_name, quantization="fp16", device=device)
+        return cls(model_name, quantization="fp16", device=device, draft_model=draft_model)
     
     @classmethod
-    def balanced(cls, model_name: str, device: str = "auto") -> "IntelligenceOrchestrator":
+    def balanced(cls, model_name: str, device: str = "auto", draft_model: Optional[str] = None) -> "IntelligenceOrchestrator":
         """
         Create orchestrator with balanced config (INT8 on GPU, FP32 on CPU).
         
         Best for: Good balance of memory and speed.
         """
-        return cls(model_name, quantization="int8", device=device)
+        return cls(model_name, quantization="int8", device=device, draft_model=draft_model)
     
     @classmethod
     def multi_gpu(
@@ -241,12 +253,14 @@ class IntelligenceOrchestrator:
                 gpu_ids=[0, 2, 3]
             )
         """
+        tp_size = len(gpu_ids) if gpu_ids else torch.cuda.device_count()
         return cls(
             model_name, 
             quantization=quantization, 
-            device="auto",  # Will be handled by device_map
+            device="auto",
             multi_gpu=True,
-            gpu_ids=gpu_ids
+            gpu_ids=gpu_ids,
+            tp_size=tp_size,
         )
     
     @staticmethod
@@ -347,7 +361,9 @@ class IntelligenceOrchestrator:
             print(f"🚀 ZSE Intelligence Orchestrator")
             print(f"   Model: {self.model_name}")
             print(f"   Quantization: {self.quantization.upper()}")
-            if self._multi_gpu:
+            if self._tp_size > 1:
+                print(f"   Tensor Parallel: {self._tp_size} GPUs")
+            elif self._multi_gpu:
                 gpu_str = f"GPUs {self._gpu_ids}" if self._gpu_ids else f"All {self._gpu_count} GPUs"
                 print(f"   Multi-GPU: {gpu_str}")
             print(f"   Expected VRAM: ~{config.estimated_vram_gb:.1f} GB")
@@ -440,10 +456,23 @@ class IntelligenceOrchestrator:
             device_map = self.device
             max_memory = None
         
+        # CPU offload: force model load to CPU (layers will be streamed to GPU)
+        if self._cpu_offload and not self._is_cpu:
+            device_map = "cpu"
+            max_memory = None
+        
         # Load model
-        if verbose:
+        if self._tp_size > 1:
+            # TP mode: skip loading model in main process.
+            # Workers will load their own shards.
+            if verbose:
+                print(f"📥 Skipping main-process model load (TP workers will load)")
+            self.model = None
+        elif verbose:
             if self._is_cpu:
                 mode = f"CPU {self.quantization.upper()}"
+            elif self._cpu_offload:
+                mode = "Hybrid CPU Offload"
             elif self._multi_gpu:
                 mode = "Multi-GPU"
             elif self._is_zse_format:
@@ -453,7 +482,11 @@ class IntelligenceOrchestrator:
             print(f"📥 Loading model ({mode})...")
         
         # Special fast path for .zse format
-        if self._is_zse_format and self._zse_path is not None:
+        if self._tp_size > 1:
+            pass  # TP mode: model loaded by workers, not main process
+        elif self._pp_size > 1:
+            pass  # PP mode: model loaded by stage workers, not main process
+        elif self._is_zse_format and self._zse_path is not None:
             # Load from pre-converted .zse format (memory-mapped, fast)
             from safetensors.torch import load_file
             
@@ -544,7 +577,38 @@ class IntelligenceOrchestrator:
         gen_device = self.device
         if self._multi_gpu:
             gen_device = "cuda"  # Multi-GPU: model handles placement
-        self.generator = TextGenerator(self.model, self.tokenizer, device=gen_device)
+        
+        # Apply tensor parallelism if requested
+        if self._tp_size > 1 and self._pp_size > 1:
+            # Combined TP + PP
+            self._apply_tp_pp_parallel(verbose)
+            gen_device = "cpu"
+        elif self._tp_size > 1:
+            self._apply_tensor_parallel(verbose)
+            gen_device = "cpu"  # TPModelWrapper handles device routing
+        
+        # Apply pipeline parallelism if requested
+        elif self._pp_size > 1:
+            self._apply_pipeline_parallel(verbose)
+            gen_device = "cpu"  # PPModelWrapper handles device routing
+        
+        # Apply hybrid CPU offload if requested
+        elif self._cpu_offload:
+            self._apply_hybrid_offload(verbose)
+            gen_device = "cpu"  # OffloadModelWrapper handles device routing
+        
+        # If draft model specified, use speculative decoding
+        if self._draft_model_name and self._tp_size <= 1 and self._pp_size <= 1 and not self._cpu_offload:
+            draft_model_nn = self._load_draft_model(gen_device, verbose)
+            from zse.engine.generation import SpeculativeTextGenerator
+            self.generator = SpeculativeTextGenerator(
+                self.model, draft_model_nn, self.tokenizer, device=gen_device,
+            )
+            if verbose:
+                print(f"⚡ Speculative decoding enabled (draft: {self._draft_model_name})")
+        elif self._tp_size <= 1 and self._pp_size <= 1 and not self._cpu_offload:
+            self.generator = TextGenerator(self.model, self.tokenizer, device=gen_device)
+        # else: TP mode — generator created inside _apply_tensor_parallel
         
         load_time = time.perf_counter() - start
         
@@ -554,6 +618,25 @@ class IntelligenceOrchestrator:
             import psutil
             process = psutil.Process()
             actual_memory = process.memory_info().rss / (1024**3)  # RSS in GB
+        elif self._tp_size > 1 and self._pp_size > 1:
+            # Combined TP+PP mode
+            total_gpus = self._tp_size * self._pp_size
+            total_vram = 0
+            for i in range(min(total_gpus, self._gpu_count)):
+                total_vram += torch.cuda.memory_allocated(i) / (1024**3)
+            actual_memory = total_vram
+        elif self._tp_size > 1:
+            # TP mode: workers hold the model, sum visible VRAM
+            total_vram = 0
+            for i in range(min(self._tp_size, self._gpu_count)):
+                total_vram += torch.cuda.memory_allocated(i) / (1024**3)
+            actual_memory = total_vram
+        elif self._pp_size > 1:
+            # PP mode: stage workers hold the model, sum visible VRAM
+            total_vram = 0
+            for i in range(min(self._pp_size, self._gpu_count)):
+                total_vram += torch.cuda.memory_allocated(i) / (1024**3)
+            actual_memory = total_vram
         elif self._multi_gpu:
             # Sum VRAM across all GPUs
             total_vram = 0
@@ -562,7 +645,13 @@ class IntelligenceOrchestrator:
             actual_memory = total_vram
         else:
             actual_memory = torch.cuda.memory_allocated() / (1024**3)
-        actual_params = sum(p.numel() for p in self.model.parameters())
+        
+        if self._tp_size > 1:
+            actual_params = 0  # Workers hold params, not main process
+        elif self._pp_size > 1:
+            actual_params = 0  # Stage workers hold params
+        else:
+            actual_params = sum(p.numel() for p in self.model.parameters())
         
         self._config = ModelConfig(
             model_name=self.model_name,
@@ -574,11 +663,20 @@ class IntelligenceOrchestrator:
         
         if verbose:
             print(f"\n✅ Model loaded in {load_time:.1f}s")
-            print(f"   Parameters: {actual_params:,} ({actual_params/1e9:.2f}B)")
+            if self._tp_size > 1 and self._pp_size > 1:
+                print(f"   Mode: TP-PP ({self._pp_size} stages × {self._tp_size} TP)")
+            elif self._tp_size > 1:
+                print(f"   Mode: Tensor Parallel ({self._tp_size} GPUs)")
+            elif self._pp_size > 1:
+                print(f"   Mode: Pipeline Parallel ({self._pp_size} stages)")
+            elif self._cpu_offload:
+                print(f"   Mode: Hybrid CPU Offload")
+            elif actual_params > 0:
+                print(f"   Parameters: {actual_params:,} ({actual_params/1e9:.2f}B)")
             if self._is_cpu:
                 print(f"   RAM Used: {actual_memory:.2f} GB")
                 print(f"   Mode: CPU inference (slower but GPU-free)")
-            elif self._multi_gpu:
+            elif self._multi_gpu and self._tp_size <= 1:
                 print(f"   Total VRAM Used: {actual_memory:.2f} GB (across {self._gpu_count} GPUs)")
                 # Show per-GPU breakdown
                 for i in range(self._gpu_count):
@@ -592,6 +690,214 @@ class IntelligenceOrchestrator:
         self._is_loaded = True
         return self
     
+    def _load_draft_model(self, device: str, verbose: bool = True) -> nn.Module:
+        """
+        Load the draft model for speculative decoding.
+        
+        Supports HuggingFace IDs, local paths, and .zse files.
+        
+        Returns:
+            Loaded draft model (nn.Module)
+        """
+        from transformers import AutoModelForCausalLM
+        
+        draft_name = self._draft_model_name
+        draft_path = Path(draft_name)
+        
+        if verbose:
+            print(f"📥 Loading draft model: {draft_name}")
+        
+        if draft_path.exists() and (
+            draft_path.suffix == ".zse" or 
+            (draft_path.is_dir() and (draft_path / "model.zse").exists())
+        ):
+            # Load from .zse format
+            zse_file = draft_path if draft_path.suffix == ".zse" else draft_path / "model.zse"
+            from zse.format.reader_v2 import load_zse_model
+            draft_model, _, _ = load_zse_model(str(zse_file), device=device)
+        elif draft_path.exists():
+            # Local HuggingFace directory
+            draft_model = AutoModelForCausalLM.from_pretrained(
+                str(draft_path),
+                torch_dtype=torch.float16,
+                device_map=device,
+                trust_remote_code=True,
+                low_cpu_mem_usage=True,
+            )
+        else:
+            # HuggingFace model ID — always use FP16 for draft models.
+            # Draft models are small (0.5B-1.5B) so FP16 uses minimal VRAM
+            # (~1-3GB) and avoids bnb dequantization overhead that kills
+            # the per-call speed advantage of a small model.
+            draft_model = AutoModelForCausalLM.from_pretrained(
+                draft_name,
+                torch_dtype=torch.float16,
+                device_map=device,
+                trust_remote_code=True,
+                low_cpu_mem_usage=True,
+            )
+        
+        draft_model.eval()
+        
+        if verbose:
+            draft_params = sum(p.numel() for p in draft_model.parameters())
+            print(f"   Draft params: {draft_params:,} ({draft_params/1e9:.2f}B)")
+        
+        return draft_model
+    
+    def _apply_tensor_parallel(self, verbose: bool = True) -> None:
+        """
+        Apply tensor parallelism using multi-process workers.
+        
+        Spawns one process per GPU, each holding a model shard.
+        Uses NCCL all-reduce for cross-GPU communication during forward.
+        The model in the main process is replaced with a TPModelWrapper
+        that delegates forward() calls to the workers.
+        """
+        from zse.core.zdistributed.worker import TPCoordinator
+        from zse.core.zdistributed.model_wrapper import TPModelWrapper
+        
+        tp_size = self._tp_size
+        
+        if verbose:
+            print(f"🔀 Tensor parallelism: spawning {tp_size} worker processes...")
+        
+        # Start coordinator (spawns worker processes)
+        self._tp_coordinator = TPCoordinator(
+            model_path=self.model_name,
+            tp_size=tp_size,
+        )
+        self._tp_coordinator.start(verbose=verbose)
+        
+        # Wrap coordinator as nn.Module for TextGenerator compatibility
+        self.model = TPModelWrapper(self._tp_coordinator)
+        
+        # Create generator using the wrapper
+        self.generator = TextGenerator(self.model, self.tokenizer, device="cpu")
+        
+        if verbose:
+            # Report per-GPU VRAM
+            for i in range(min(tp_size, self._gpu_count)):
+                vram = torch.cuda.memory_allocated(i) / (1024**3)
+                print(f"   GPU {i} VRAM: {vram:.2f} GB")
+    
+    def _apply_pipeline_parallel(self, verbose: bool = True) -> None:
+        """
+        Apply pipeline parallelism using multi-process stage workers.
+        
+        Spawns one process per GPU, each holding a contiguous range of layers.
+        Activations flow stage-to-stage via NCCL point-to-point send/recv.
+        
+        Stage 0: embedding + first layers
+        Stage N-1: last layers + norm + lm_head
+        """
+        from zse.core.zdistributed.pipeline_parallel import PPCoordinator
+        from zse.core.zdistributed.model_wrapper import PPModelWrapper
+        
+        pp_size = self._pp_size
+        
+        if verbose:
+            print(f"🔗 Pipeline parallelism: spawning {pp_size} stage processes...")
+        
+        self._pp_coordinator = PPCoordinator(
+            model_path=self.model_name,
+            pp_size=pp_size,
+        )
+        self._pp_coordinator.start(verbose=verbose)
+        
+        self.model = PPModelWrapper(self._pp_coordinator)
+        self.generator = TextGenerator(self.model, self.tokenizer, device="cpu")
+        
+        if verbose:
+            for i in range(min(pp_size, self._gpu_count)):
+                vram = torch.cuda.memory_allocated(i) / (1024**3)
+                print(f"   Stage {i} VRAM: {vram:.2f} GB")
+    
+    def _apply_tp_pp_parallel(self, verbose: bool = True) -> None:
+        """
+        Apply combined tensor + pipeline parallelism.
+
+        Arranges GPUs in a 2-D grid: pp_size stages × tp_size TP per stage.
+        Total GPUs = tp_size × pp_size.
+        """
+        from zse.core.zdistributed.tp_pp_parallel import TPPPCoordinator
+        from zse.core.zdistributed.model_wrapper import TPModelWrapper
+
+        tp_size = self._tp_size
+        pp_size = self._pp_size
+        total = tp_size * pp_size
+
+        if verbose:
+            print(f"🔀🔗 Combined TP-PP: {total} GPUs ({pp_size} stages × {tp_size} TP)...")
+
+        self._tppp_coordinator = TPPPCoordinator(
+            model_path=self.model_name,
+            tp_size=tp_size,
+            pp_size=pp_size,
+        )
+        self._tppp_coordinator.start(verbose=verbose)
+
+        self.model = TPModelWrapper(self._tppp_coordinator)
+        self.generator = TextGenerator(self.model, self.tokenizer, device="cpu")
+
+        if verbose:
+            for i in range(min(total, self._gpu_count)):
+                vram = torch.cuda.memory_allocated(i) / (1024**3)
+                print(f"   GPU {i} VRAM: {vram:.2f} GB")
+
+    def _apply_hybrid_offload(self, verbose: bool = True) -> None:
+        """
+        Apply hybrid CPU offload using layer streaming.
+
+        The model is already loaded on CPU.  We wrap it with
+        OffloadModelWrapper which keeps embed/norm/head on GPU
+        and streams transformer layers through a GPU window.
+        """
+        from zse.core.zdistributed.hybrid_offload import HybridOffloadCoordinator
+        from zse.engine.generation import TextGenerator
+
+        # Estimate optimal GPU window from free VRAM
+        gpu_layers = 4  # conservative default
+        if torch.cuda.is_available():
+            free = torch.cuda.mem_get_info(0)[0]
+            # Estimate layer size from model
+            try:
+                inner = getattr(self.model, "model", self.model)
+                layers_list = getattr(inner, "layers", None)
+                if layers_list is None:
+                    layers_list = getattr(getattr(self.model, "transformer", None), "h", [])
+                if len(layers_list) > 0:
+                    layer_bytes = sum(
+                        p.numel() * p.element_size() for p in layers_list[0].parameters()
+                    )
+                    # Leave 1 GB headroom for activations / KV cache
+                    usable = max(0, free - 1 * 1024**3)
+                    gpu_layers = max(2, int(usable // layer_bytes))
+            except Exception:
+                pass
+
+        if verbose:
+            print(f"🔄 Hybrid CPU offload: GPU window = {gpu_layers} layers")
+
+        device_idx = 0
+        if self.device.startswith("cuda:"):
+            device_idx = int(self.device.split(":")[1])
+
+        self._offload_coordinator = HybridOffloadCoordinator(
+            model=self.model,
+            device=device_idx,
+            gpu_layers=gpu_layers,
+            prefetch_count=2,
+            use_pinned_memory=True,
+        )
+
+        self.model = self._offload_coordinator.get_wrapper()
+        self.generator = TextGenerator(self.model, self.tokenizer, device="cpu")
+
+        if verbose:
+            vram = torch.cuda.memory_allocated(device_idx) / (1024**3)
+            print(f"   VRAM used: {vram:.2f} GB")
+
     def generate(
         self,
         prompt: str,

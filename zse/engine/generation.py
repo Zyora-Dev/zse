@@ -499,6 +499,93 @@ class StreamingCallback:
         pass
 
 
+class SpeculativeTextGenerator(TextGenerator):
+    """
+    Text generator using speculative decoding for faster inference.
+    
+    Uses a small draft model to propose tokens, verified by the target model.
+    Produces the same distribution as standard generation but 2-3x faster.
+    """
+    
+    def __init__(
+        self,
+        model: nn.Module,
+        draft_model: nn.Module,
+        tokenizer: Any,
+        device: str = "cuda",
+        spec_config: Any = None,
+    ):
+        super().__init__(model, tokenizer, device)
+        self.draft_model = draft_model
+        
+        from zse.core.zspec import SpeculativeDecoder, SpeculativeConfig
+        self._decoder = SpeculativeDecoder(
+            target_model=model,
+            draft_model=draft_model,
+            config=spec_config or SpeculativeConfig(),
+            target_device=device,
+        )
+    
+    def generate_stream(
+        self,
+        prompt: str,
+        params: Optional[SamplingParams] = None,
+    ) -> Iterator[StreamChunk]:
+        """Generate text using speculative decoding with streaming output."""
+        params = params or SamplingParams()
+        
+        # Encode prompt
+        input_ids = self._encode(prompt)
+        input_ids = torch.tensor([input_ids], dtype=torch.long, device=self.device)
+        
+        # Setup stop checker
+        stop_checker = StopChecker(
+            eos_token_id=params.eos_token_id or self.eos_token_id,
+            stop_token_ids=params.stop_token_ids,
+            stop_sequences=params.stop_sequences,
+            max_new_tokens=params.max_new_tokens,
+            tokenizer=self.tokenizer,
+        )
+        
+        generated_tokens: List[int] = []
+        generated_text = ""
+        
+        for spec_output in self._decoder.generate(
+            input_ids,
+            max_tokens=params.max_new_tokens,
+            temperature=params.temperature if params.temperature > 0 else 0.0,
+            stop_token_id=params.eos_token_id or self.eos_token_id,
+        ):
+            # Convert each accepted token to a StreamChunk
+            for i in range(spec_output.num_accepted):
+                token_id = spec_output.token_ids[0, i].item()
+                generated_tokens.append(token_id)
+                token_text = self._decode([token_id])
+                generated_text += token_text
+                
+                should_stop, reason = stop_checker.should_stop(
+                    token_id, generated_tokens, generated_text
+                )
+                
+                # Per-token latency = step time / tokens accepted
+                per_token_ms = spec_output.total_time_ms / max(spec_output.num_accepted, 1)
+                
+                yield StreamChunk(
+                    text=token_text,
+                    token_id=token_id,
+                    is_finished=should_stop,
+                    finish_reason=reason if should_stop else None,
+                    latency_ms=per_token_ms,
+                )
+                
+                if should_stop:
+                    return
+    
+    def get_speculation_stats(self) -> Dict[str, Any]:
+        """Get speculative decoding statistics."""
+        return self._decoder.get_stats()
+
+
 class PrintStreamCallback(StreamingCallback):
     """Print tokens as they're generated."""
     
