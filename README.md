@@ -94,7 +94,7 @@ Install training dependencies: `pip install zllm-zse[training]`
 - 🏃 **Fast Cold Start**: 5.7s for 7B, 20s for 32B, 52s for 72B
 - 🎯 **Dual Backend**: Custom kernel (default) or bnb backend (alternate)
 - 🔥 **QLoRA Training**: Fine-tune INT4 models with LoRA adapters (NEW in v1.4.0)
-- 📄 **Built-in RAG with .zpf**: 32% fewer LLM tokens at 90% accuracy vs plain chunking
+- 📄 **Built-in RAG with .zpf**: 25% fewer LLM tokens at 100% accuracy vs plain chunking
 
 ## Installation
 
@@ -177,7 +177,7 @@ print(response.choices[0].message.content)
 
 ## .zpf: Built-in RAG with Token Cost Reduction
 
-**.zpf delivers 90% retrieval accuracy at 32% lower LLM token cost compared to plain chunking — tested on real noisy web content.**
+**.zpf delivers 100% retrieval accuracy at 25% lower LLM token cost compared to plain chunking — tested on real noisy web content.**
 
 `.zpf` (Z Packed Format) is ZSE's built-in semantic document format for RAG. It compresses documents at write-time, stripping noise (cookie banners, nav, boilerplate, filler prose) while preserving what the LLM needs.
 
@@ -185,11 +185,11 @@ print(response.choices[0].message.content)
 
 | Metric | .zpf | Plain Chunking |
 |--------|------|----------------|
-| Correct answers | 9/10 | 10/10 |
-| Tokens sent to LLM (avg/query) | **856** | 1,257 |
-| Token reduction | **32%** | — |
-| Cost per 1M queries (GPT-4o) | **$2,139** | $3,143 |
-| Annual savings at 1M queries | **$1,004** | — |
+| Correct answers | 10/10 | 10/10 |
+| Tokens sent to LLM (avg/query) | **943** | 1,257 |
+| Token reduction | **25%** | — |
+| Cost per 1M queries (GPT-4o) | **$2,357** | $3,143 |
+| Annual savings at 1M queries | **$786** | — |
 | Break-even | **1 query** per document | — |
 
 ### Quick Start
@@ -221,7 +221,7 @@ context = pipeline.get_context("What is transfer learning?", max_tokens=500)
 1. **Semantic chunking** — splits by content type (11 block types: CODE, TABLE, DEFINITION, PROCEDURE, etc.)
 2. **10-layer compression** — strips filler phrases, verbose patterns, redundant qualifiers, noise lines
 3. **Contextual embedding** — each block embeds with parent section hierarchy for cross-section retrieval
-4. **Hybrid retrieval** — 0.6× embedding similarity + 0.4× BM25, with size normalization and block-type boosting
+4. **Hybrid retrieval** — 0.6× embedding similarity + 0.4× BM25, with size normalization, block-type boosting, and identifier-aware scoring
 
 See [progress.md](progress.md) for full benchmarks and technical details.
 

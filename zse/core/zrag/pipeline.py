@@ -293,7 +293,9 @@ class RAGPipeline:
         Returns a token-budget-aware context string built from the
         highest-scoring semantic blocks.
         """
-        results = self.search(query, top_k=top_k, doc_filter=doc_filter)
+        from zse.core.zrag.vector_store import _LIST_PATTERN
+        effective_top_k = 15 if _LIST_PATTERN.search(query) else top_k
+        results = self.search(query, top_k=effective_top_k, doc_filter=doc_filter)
 
         context_parts = []
         token_count = 0

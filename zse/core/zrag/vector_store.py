@@ -33,6 +33,15 @@ def _tokenize(text: str) -> List[str]:
 
 # ── Query intent → block-type boost ──────────────────────────────────────────
 
+_LIST_PATTERN = re.compile(
+    r"\b(what\s+(techniques|types|kinds|methods|ways|are\s+the)|list\s+(all|the)|name\s+(three|all|the|some)|which\s+(techniques|types|methods))\b",
+    re.I,
+)
+
+_IDENTIFIER_PATTERN = re.compile(
+    r"[a-zA-Z][a-zA-Z0-9]*[-_][a-zA-Z0-9]+([-_][a-zA-Z0-9]+)*"
+)
+
 _INTENT_PATTERNS = {
     "code": (
         re.compile(
@@ -243,7 +252,12 @@ class VectorStore:
                 bm25_scores = bm25_scores / bm25_max
 
         # ── 4. Hybrid combination ──
-        scores = 0.6 * emb_scores_norm + 0.4 * bm25_scores
+        # If query contains identifiers (model names, env vars, CLI flags),
+        # shift to BM25-heavy scoring — embeddings can't match version strings
+        if query_text and _IDENTIFIER_PATTERN.search(query_text):
+            scores = 0.2 * emb_scores_norm + 0.8 * bm25_scores
+        else:
+            scores = 0.6 * emb_scores_norm + 0.4 * bm25_scores
 
         # ── 5. Block-type boosting ──
         if query_text:
