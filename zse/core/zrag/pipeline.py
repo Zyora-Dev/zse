@@ -270,6 +270,7 @@ class RAGPipeline:
             top_k=top_k,
             doc_filter=doc_filter,
             score_threshold=score_threshold,
+            query_text=query,
         )
 
     def get_context(

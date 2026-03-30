@@ -442,6 +442,17 @@ class SemanticChunker:
             text = doc.text
             blocks = self._split_text(text, 0)
 
+        # Split oversized blocks (cap at ~150 tokens for embedding quality)
+        max_post_tokens = 150
+        split_blocks: List[SemanticBlock] = []
+        for block in blocks:
+            if block.token_count > max_post_tokens:
+                sub_blocks = self._split_oversized_block(block, max_post_tokens)
+                split_blocks.extend(sub_blocks)
+            else:
+                split_blocks.append(block)
+        blocks = split_blocks
+
         # Filter out tiny blocks and deduplicate
         seen_hashes = set()
         final_blocks: List[SemanticBlock] = []
@@ -609,6 +620,50 @@ class SemanticChunker:
                 blocks.append(block)
 
         return blocks
+
+    def _split_oversized_block(
+        self, block: SemanticBlock, max_tokens: int
+    ) -> List[SemanticBlock]:
+        """Split a block that exceeds max_tokens into smaller sub-blocks."""
+        text = block.content
+        sentences = re.split(r"(?<=[.!?\n])\s+", text)
+        if len(sentences) <= 1:
+            # Can't split further by sentence; split by raw token estimate
+            words = text.split()
+            mid = len(words) // 2
+            parts = [" ".join(words[:mid]), " ".join(words[mid:])]
+        else:
+            parts = []
+            current: List[str] = []
+            current_tok = 0
+            for sent in sentences:
+                sent_tok = _estimate_tokens(sent)
+                if current_tok + sent_tok > max_tokens and current:
+                    parts.append(" ".join(current))
+                    current = []
+                    current_tok = 0
+                current.append(sent)
+                current_tok += sent_tok
+            if current:
+                parts.append(" ".join(current))
+
+        sub_blocks = []
+        for part in parts:
+            part = part.strip()
+            if not part or len(part) < 10:
+                continue
+            token_count = _estimate_tokens(part)
+            if token_count < self.min_block_tokens:
+                continue
+            sub_blocks.append(SemanticBlock(
+                block_type=block.block_type,
+                content=part,
+                token_count=token_count,
+                semantic_hash=_semantic_hash(part),
+                summary=_make_summary(part),
+                source_range=block.source_range,
+            ))
+        return sub_blocks if sub_blocks else [block]
 
     def _make_block(
         self, text: str, start: int, end: int
