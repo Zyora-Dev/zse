@@ -447,28 +447,9 @@ def estimate_tokens(text):
     return max(1, len(text) // 4)
 
 
-def naive_chunk(text, chunk_size=512):
-    """Naive fixed-size chunking (baseline comparison)."""
-    words = text.split()
-    chunks = []
-    current = []
-    current_tokens = 0
-    for word in words:
-        word_tokens = max(1, len(word) // 4)
-        if current_tokens + word_tokens > chunk_size and current:
-            chunks.append(" ".join(current))
-            current = []
-            current_tokens = 0
-        current.append(word)
-        current_tokens += word_tokens
-    if current:
-        chunks.append(" ".join(current))
-    return chunks
-
-
 def run_benchmark():
     print("=" * 75)
-    print("ZPF SEMANTIC COMPRESSION BENCHMARK (v2 — real different documents)")
+    print("ZPF SEMANTIC COMPRESSION BENCHMARK")
     print("=" * 75)
     print()
 
@@ -513,12 +494,7 @@ def run_benchmark():
             zpf_bytes = os.path.getsize(zpf_path)
             block_count = reader.header.block_count
 
-            # Naive chunking baseline
-            naive_chunks = naive_chunk(content, chunk_size=512)
-            naive_tokens = sum(estimate_tokens(c) for c in naive_chunks)
-
             token_reduction = (1 - zpf_tokens / raw_tokens) * 100 if raw_tokens > 0 else 0
-            vs_naive = (1 - zpf_tokens / naive_tokens) * 100 if naive_tokens > 0 else 0
 
             results.append({
                 "label": label,
@@ -527,12 +503,9 @@ def run_benchmark():
                 "zpf_tokens": zpf_tokens,
                 "zpf_bytes": zpf_bytes,
                 "blocks": block_count,
-                "naive_chunks": len(naive_chunks),
-                "naive_tokens": naive_tokens,
                 "noise_lines": len(noise_lines),
                 "noise_chars": noise_chars,
                 "token_reduction": token_reduction,
-                "vs_naive": vs_naive,
                 "time_ms": convert_time * 1000,
             })
 
@@ -541,10 +514,8 @@ def run_benchmark():
             print(f"{'='*75}")
             print(f"  Original:       {raw_bytes:>8,} bytes | {raw_tokens:>6,} tokens")
             print(f"  .zpf output:    {zpf_bytes:>8,} bytes | {zpf_tokens:>6,} tokens | {block_count} blocks")
-            print(f"  Naive 512-chunk: {len(naive_chunks)} chunks | {naive_tokens:>6,} tokens")
             print(f"  Noise stripped:  {len(noise_lines)} lines ({noise_chars:,} chars)")
             print(f"  Token savings:   {token_reduction:.1f}% vs raw")
-            print(f"  vs naive chunk:  {vs_naive:.1f}% fewer tokens")
             print(f"  Convert time:    {convert_time*1000:.0f}ms")
             print()
 
@@ -571,14 +542,13 @@ def run_benchmark():
         print("=" * 75)
         print("SUMMARY")
         print("=" * 75)
-        print(f"{'Document':<42} {'Raw':>7} {'ZPF':>7} {'Naive':>7} {'Blocks':>7} {'Save%':>7}")
+        print(f"{'Document':<42} {'Raw':>7} {'ZPF':>7} {'Blocks':>7} {'Save%':>7}")
         print("-" * 75)
         for r in results:
             print(
                 f"{r['label']:<42} "
                 f"{r['raw_tokens']:>7,} "
                 f"{r['zpf_tokens']:>7,} "
-                f"{r['naive_tokens']:>7,} "
                 f"{r['blocks']:>7} "
                 f"{r['token_reduction']:>6.1f}%"
             )
