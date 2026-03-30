@@ -195,14 +195,32 @@ print(response.choices[0].message.content)
 ### Quick Start
 
 ```bash
-# Ingest a document
-zse rag ingest paper.pdf
+# Ingest a document into RAG store
+zse rag add paper.pdf --title "ML Paper"
 
-# Query with token-budgeted context
-zse rag query "What is batch normalization?" --budget 500
+# Semantic search
+zse rag search "What is batch normalization?" -k 5
 
-# Export to open formats
-zse rag export paper.zpf --format markdown
+# Get token-budgeted LLM context
+zse rag context "What is batch normalization?" --max-tokens 500
+
+# List all documents
+zse rag list
+
+# Export to open formats (zero vendor lock-in)
+zse rag export paper.zpf -f markdown -o paper.md
+
+# Inspect .zpf file metadata
+zse rag inspect paper.zpf
+
+# Show store stats
+zse rag stats
+
+# Re-embed with a different model
+zse rag reindex --model all-MiniLM-L6-v2
+
+# Remove a document
+zse rag remove <doc_id>
 ```
 
 ```python
@@ -213,7 +231,7 @@ pipeline.ingest("noisy_article.md")
 
 # Get LLM-ready context (token-budgeted)
 context = pipeline.get_context("What is transfer learning?", max_tokens=500)
-# ~32% fewer tokens than plain chunking, same answer quality
+# ~25% fewer tokens than plain chunking, same answer quality
 ```
 
 ### How It Works
@@ -224,6 +242,38 @@ context = pipeline.get_context("What is transfer learning?", max_tokens=500)
 4. **Hybrid retrieval** — 0.6× embedding similarity + 0.4× BM25, with size normalization, block-type boosting, and identifier-aware scoring
 
 See [progress.md](progress.md) for full benchmarks and technical details.
+
+## Multi-GPU: Tensor Parallelism & Pipeline Parallelism
+
+Run models across multiple GPUs to reduce per-GPU VRAM or serve larger models.
+
+```bash
+# Tensor Parallelism — shard weights across GPUs (NCCL all-reduce)
+zse serve qwen-32b -tp 2 --port 8000
+
+# Pipeline Parallelism — split layers across GPUs (NCCL send/recv)
+zse serve qwen-72b -pp 4 --port 8000
+
+# Hybrid TP+PP — 2D process grid
+zse serve qwen-72b -tp 2 -pp 2 --port 8000
+
+# Auto-detect — let ZSE pick optimal layout
+zse serve qwen-72b --multi-gpu --port 8000
+```
+
+### Multi-GPU Benchmarks (Qwen2.5-7B INT4, A10G GPUs)
+
+| Config | Speed | VRAM/GPU | vs Single GPU |
+|--------|-------|----------|---------------|
+| Single GPU | 23.1 tok/s | 5.22 GB | baseline |
+| **TP=2** | 18.6 tok/s | 3.76 GB | **-28% VRAM** |
+| **PP=2** | 23.1 tok/s | 2.67 GB | **-49% VRAM** |
+| **TP=2 × PP=2** | 20.6 tok/s | 1.6-2.1 GB | **-65% VRAM** |
+
+**When to use what:**
+- **TP**: Fastest inference, splits every layer. Best when GPUs are connected via NVLink.
+- **PP**: Best VRAM reduction, near-perfect memory split. Works over PCIe.
+- **TP+PP**: Maximum scale — run 72B on 4× consumer GPUs.
 
 ## Advanced Usage
 
@@ -330,34 +380,38 @@ print(f'{tokens} tokens in {time.time()-t0:.2f}s = {tokens/(time.time()-t0):.1f}
 ## CLI Commands
 
 ```bash
-# Pull pre-converted model (NEW in v1.4.1)
-zse pull <model>                    # e.g., zse pull qwen-7b
+# Model Management
+zse pull <model>                    # Download pre-converted .zse model
+zse list                            # Browse available models
+zse list --cached                   # Show locally cached models
+zse cached                          # Show cache details
+zse convert <model_id> -o out.zse   # Convert HuggingFace model
+zse info <model>                    # Show model info
+zse hardware                        # Check GPU/VRAM
 
-# Browse available models (NEW in v1.4.1)
-zse list                            # All models
-zse list --cached                   # Locally cached models
+# Serving
+zse serve <model> --port 8000       # Single GPU
+zse serve <model> -tp 2 --port 8000 # Tensor parallel (2 GPUs)
+zse serve <model> -pp 2 --port 8000 # Pipeline parallel (2 GPUs)
+zse serve <model> -tp 2 -pp 2       # Hybrid TP+PP (4 GPUs)
+zse serve <model> --multi-gpu       # Auto-detect optimal layout
+zse chat <model>                    # Interactive chat
 
-# HuggingFace auth for gated models (NEW in v1.4.1)
+# RAG (.zpf)
+zse rag add <file> [--title <t>]    # Ingest document
+zse rag search <query> [-k <n>]     # Semantic search
+zse rag context <query> [--max-tokens <n>]  # Token-budgeted context
+zse rag list                        # List documents
+zse rag remove <doc_id>             # Remove document
+zse rag convert <file> [-o out.zpf] # Convert to .zpf only
+zse rag inspect <zpf_path>          # Show .zpf metadata
+zse rag export <zpf> [-f fmt]       # Export (markdown/jsonl/json)
+zse rag stats                       # Store statistics
+zse rag reindex [--model <name>]    # Re-embed with new model
+
+# Auth (for gated models)
 zse login
 zse logout
-
-# Show cached models (NEW in v1.4.1)
-zse cached
-
-# Convert model
-zse convert <model_id> -o output.zse
-
-# Start server
-zse serve <model> --port 8000       # Alias or .zse path
-
-# Interactive chat
-zse chat <model>                    # Alias or .zse path
-
-# Show model info
-zse info <model>
-
-# Check hardware
-zse hardware
 ```
 
 ## 🤗 Pre-Converted Models
