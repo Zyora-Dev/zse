@@ -6,8 +6,13 @@
 
 <h1 align="center">ZSE - Z Server Engine</h1>
 
-<p align="center"> ZSE is free and open source. If it helps you, consider sponsoring us. <br>Sponsors get exclusive business perks. Mail us at zse@zyoralabs.com for details.<br>
-[![Sponsor ZSE](https://img.shields.io/badge/Sponsor-ZSE-01696f?style=for-the-badge)](https://payments.cashfree.com/forms/zyoralabs) </p>
+<p align="center">
+ZSE is free and open source. If it helps you, consider sponsoring us.<br>
+Sponsors get exclusive business perks. Mail us at <a href="mailto:zse@zyoralabs.com">zse@zyoralabs.com</a> for details.<br><br>
+<a href="https://payments.cashfree.com/forms/zyoralabs">
+  <img src="https://img.shields.io/badge/Sponsor-ZSE-01696f?style=for-the-badge" alt="Sponsor ZSE"/>
+</a>
+</p>
 
 <p align="center">
   <a href="https://pypi.org/project/zllm-zse/"><img src="https://img.shields.io/pypi/v/zllm-zse.svg" alt="PyPI"></a>
