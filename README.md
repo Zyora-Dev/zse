@@ -6,6 +6,8 @@
 
 <h1 align="center">ZSE - Z Server Engine</h1>
 
+[![Sponsor ZSE](https://img.shields.io/badge/Sponsor-ZSE-01696f?style=for-the-badge)](https://payments.cashfree.com/forms/zyoralabs)
+
 <p align="center">
   <a href="https://pypi.org/project/zllm-zse/"><img src="https://img.shields.io/pypi/v/zllm-zse.svg" alt="PyPI"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python 3.11+"></a>
