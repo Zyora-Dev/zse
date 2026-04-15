@@ -9,7 +9,10 @@
 <p align="center">
 ZSE is free and open source. If it helps you, consider sponsoring us.<br>
 Sponsors get exclusive business perks. Mail us at <a href="mailto:zse@zyoralabs.com">zse@zyoralabs.com</a> for details.<br><br>
-<a href="https://payments.cashfree.com/forms/zyoralabs">
+<a href="https://github.com/sponsors/Zyora-Dev">
+  <img src="https://img.shields.io/badge/Sponsor-❤️-ea4aaa?style=for-the-badge&logo=github-sponsors" alt="Sponsor ZSE"/>
+</a>
+  <a href="https://payments.cashfree.com/forms/zyoralabs">
   <img src="https://img.shields.io/badge/Sponsor-ZSE-01696f?style=for-the-badge" alt="Sponsor ZSE"/>
 </a>
 </p>
