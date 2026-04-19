@@ -23,10 +23,10 @@ Memory Targets for 7B models:
 
 Usage:
     from zse.engine.orchestrator import IntelligenceOrchestrator
-    
+
     # Auto-detect best config
     orchestrator = IntelligenceOrchestrator.auto("Qwen/Qwen2.5-Coder-7B-Instruct")
-    
+
     # Or specify preference
     orchestrator = IntelligenceOrchestrator.for_vram(4.0, "model_name")
     orchestrator = IntelligenceOrchestrator.min_memory("model_name")

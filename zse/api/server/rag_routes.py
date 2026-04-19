@@ -19,8 +19,10 @@ from zse.api.server.rag import get_rag_store, Document, SearchResult
 # Request/Response Models
 # =============================================================================
 
+
 class AddDocumentRequest(BaseModel):
     """Request to add a document by content."""
+
     name: str
     content: str
     file_type: str = "text"
@@ -29,6 +31,7 @@ class AddDocumentRequest(BaseModel):
 
 class DocumentResponse(BaseModel):
     """Document response."""
+
     id: str
     name: str
     chunk_count: int
@@ -40,12 +43,14 @@ class DocumentResponse(BaseModel):
 
 class DocumentListResponse(BaseModel):
     """List of documents."""
+
     documents: List[DocumentResponse]
     total: int
 
 
 class SearchRequest(BaseModel):
     """Search request."""
+
     query: str
     top_k: int = 5
     min_score: float = 0.0
@@ -54,6 +59,7 @@ class SearchRequest(BaseModel):
 
 class ChunkResponse(BaseModel):
     """Chunk in search result."""
+
     id: str
     document_id: str
     content: str
@@ -62,6 +68,7 @@ class ChunkResponse(BaseModel):
 
 class SearchResultResponse(BaseModel):
     """Single search result."""
+
     chunk: ChunkResponse
     document_name: str
     document_id: str
@@ -70,12 +77,14 @@ class SearchResultResponse(BaseModel):
 
 class SearchResponse(BaseModel):
     """Search results."""
+
     results: List[SearchResultResponse]
     query: str
 
 
 class ContextRequest(BaseModel):
     """Context retrieval request."""
+
     query: str
     top_k: int = 3
     max_tokens: int = 1000
@@ -84,12 +93,14 @@ class ContextRequest(BaseModel):
 
 class ContextResponse(BaseModel):
     """Context for chat injection."""
+
     context: str
     sources: List[SearchResultResponse]
 
 
 class RAGStatsResponse(BaseModel):
     """RAG store statistics."""
+
     documents: int
     chunks: int
     embeddings: int
@@ -108,11 +119,12 @@ router = APIRouter(prefix="/api/rag", tags=["RAG"])
 # Document Endpoints
 # =============================================================================
 
+
 @router.post("/documents", response_model=DocumentResponse)
 async def add_document(request: AddDocumentRequest):
     """Add a document by content."""
     store = get_rag_store()
-    
+
     try:
         doc = store.add_document(
             name=request.name,
@@ -139,63 +151,62 @@ async def upload_document(
     metadata: Optional[str] = Form(default=None),
 ):
     """Upload a document file.
-    
+
     Supported formats: .txt, .md, .pdf (text extraction), .json
     """
     store = get_rag_store()
-    
+
     # Read file content
     content_bytes = await file.read()
     filename = file.filename or "untitled"
-    
+
     # Determine file type and extract text
-    file_ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else 'txt'
-    
-    if file_ext in ('txt', 'md', 'markdown'):
-        content = content_bytes.decode('utf-8', errors='ignore')
-        file_type = 'text' if file_ext == 'txt' else 'markdown'
-    
-    elif file_ext == 'json':
-        content = content_bytes.decode('utf-8', errors='ignore')
-        file_type = 'json'
-    
-    elif file_ext == 'pdf':
+    file_ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
+
+    if file_ext in ("txt", "md", "markdown"):
+        content = content_bytes.decode("utf-8", errors="ignore")
+        file_type = "text" if file_ext == "txt" else "markdown"
+
+    elif file_ext == "json":
+        content = content_bytes.decode("utf-8", errors="ignore")
+        file_type = "json"
+
+    elif file_ext == "pdf":
         # Try to extract text from PDF
         try:
             import pypdf
+
             reader = pypdf.PdfReader(io.BytesIO(content_bytes))
-            content = "\n\n".join(
-                page.extract_text() or "" for page in reader.pages
-            )
-            file_type = 'pdf'
+            content = "\n\n".join(page.extract_text() or "" for page in reader.pages)
+            file_type = "pdf"
         except ImportError:
             raise HTTPException(
-                status_code=400,
-                detail="PDF support requires pypdf: pip install pypdf"
+                status_code=400, detail="PDF support requires pypdf: pip install pypdf"
             )
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Failed to parse PDF: {e}")
-    
+
     else:
         # Try to decode as text
         try:
-            content = content_bytes.decode('utf-8', errors='ignore')
-            file_type = 'text'
+            content = content_bytes.decode("utf-8", errors="ignore")
+            file_type = "text"
         except Exception:
             raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_ext}")
-    
+
     if not content.strip():
         raise HTTPException(status_code=400, detail="Document is empty")
-    
+
     # Parse metadata if provided
     meta = {}
     if metadata:
         try:
             import json
+
             meta = json.loads(metadata)
         except Exception:
             pass
-    
+
     try:
         doc = store.add_document(
             name=filename,
@@ -224,7 +235,7 @@ async def list_documents(
     """List all documents."""
     store = get_rag_store()
     documents = store.list_documents(limit=limit, offset=offset)
-    
+
     return DocumentListResponse(
         documents=[
             DocumentResponse(
@@ -247,10 +258,10 @@ async def get_document(doc_id: str):
     """Get a document by ID."""
     store = get_rag_store()
     doc = store.get_document(doc_id)
-    
+
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    
+
     return DocumentResponse(
         id=doc.id,
         name=doc.name,
@@ -266,10 +277,10 @@ async def get_document(doc_id: str):
 async def delete_document(doc_id: str):
     """Delete a document and its chunks."""
     store = get_rag_store()
-    
+
     if not store.delete_document(doc_id):
         raise HTTPException(status_code=404, detail="Document not found")
-    
+
     return {"status": "deleted", "id": doc_id}
 
 
@@ -277,18 +288,19 @@ async def delete_document(doc_id: str):
 # Search Endpoints
 # =============================================================================
 
+
 @router.post("/search", response_model=SearchResponse)
 async def search_documents(request: SearchRequest):
     """Search for relevant document chunks."""
     store = get_rag_store()
-    
+
     results = store.search(
         query=request.query,
         top_k=request.top_k,
         min_score=request.min_score,
         document_ids=request.document_ids,
     )
-    
+
     return SearchResponse(
         results=[
             SearchResultResponse(
@@ -311,19 +323,19 @@ async def search_documents(request: SearchRequest):
 @router.post("/context", response_model=ContextResponse)
 async def get_context(request: ContextRequest):
     """Get context for chat augmentation.
-    
+
     Returns a formatted context string ready to inject into prompts,
     along with source information.
     """
     store = get_rag_store()
-    
+
     context, results = store.get_context(
         query=request.query,
         top_k=request.top_k,
         max_tokens=request.max_tokens,
         document_ids=request.document_ids,
     )
-    
+
     return ContextResponse(
         context=context,
         sources=[
@@ -346,6 +358,7 @@ async def get_context(request: ContextRequest):
 # =============================================================================
 # Stats Endpoint
 # =============================================================================
+
 
 @router.get("/stats", response_model=RAGStatsResponse)
 async def get_rag_stats():

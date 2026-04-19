@@ -27,14 +27,14 @@ Usage:
         num_heads=32,
         head_dim=128,
     )
-    
+
     # Or Longformer-style (window + global tokens)
     attn = zSparseAttention(
         pattern=SparsePattern.longformer(window_size=512, num_global_start=1),
         num_heads=32,
         head_dim=128,
     )
-    
+
     # Forward pass
     output = attn(query, key, value)
 
@@ -79,20 +79,17 @@ __all__ = [
     "PatternConfig",
     "PatternType",
     "create_pattern_from_name",
-    
     # Masks
     "SparseMask",
     "SparseMaskGenerator",
     "create_causal_sliding_window_mask",
     "visualize_mask",
-    
     # Attention modules
     "zSparseAttention",
     "SparseAttentionConfig",
     "create_sparse_attention",
     "replace_attention_with_sparse",
     "benchmark_sparse_attention",
-    
     # Kernels
     "TRITON_AVAILABLE",
     "sparse_attention",

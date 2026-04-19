@@ -55,24 +55,25 @@ ZPF_MAGIC = b"ZPF\x00"
 ZPF_VERSION = (1, 0, 0, 0)
 
 # Limits
-MAX_HEADER_SIZE = 1 * 1024 * 1024    # 1 MB
-MAX_INDEX_SIZE = 10 * 1024 * 1024     # 10 MB
-MAX_EMBED_SIZE = 500 * 1024 * 1024    # 500 MB
+MAX_HEADER_SIZE = 1 * 1024 * 1024  # 1 MB
+MAX_INDEX_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_EMBED_SIZE = 500 * 1024 * 1024  # 500 MB
 
 
 class BlockType(IntEnum):
     """Semantic block types — what kind of content is this."""
-    TEXT = 0          # General text content
-    DEFINITION = 1   # A definition, concept, or term explanation
-    FACT = 2         # A factual statement or data point
-    PROCEDURE = 3    # Instructions, steps, how-to
-    TABLE = 4        # Structured tabular data (compressed)
-    CODE = 5         # Code snippet
-    QA = 6           # Question-answer pair
-    SUMMARY = 7      # Summary or abstract
-    LIST = 8         # List of items
-    REFERENCE = 9    # Citation, reference, or link
-    METADATA = 10    # Document metadata block
+
+    TEXT = 0  # General text content
+    DEFINITION = 1  # A definition, concept, or term explanation
+    FACT = 2  # A factual statement or data point
+    PROCEDURE = 3  # Instructions, steps, how-to
+    TABLE = 4  # Structured tabular data (compressed)
+    CODE = 5  # Code snippet
+    QA = 6  # Question-answer pair
+    SUMMARY = 7  # Summary or abstract
+    LIST = 8  # List of items
+    REFERENCE = 9  # Citation, reference, or link
+    METADATA = 10  # Document metadata block
 
 
 @dataclass
@@ -93,6 +94,7 @@ class SemanticBlock:
         embedding: Float32 vector (set during write, stripped on serialize)
         metadata: Extra block-level metadata
     """
+
     block_type: BlockType
     content: str
     token_count: int
@@ -133,17 +135,18 @@ class ZPFHeader:
     """
     .zpf file header — document-level metadata.
     """
+
     doc_id: str
     title: str
-    source_type: str        # "pdf", "docx", "html", "txt", "csv", "json", "md"
-    created_at: str         # ISO 8601
-    source_hash: str        # Hash of original document
+    source_type: str  # "pdf", "docx", "html", "txt", "csv", "json", "md"
+    created_at: str  # ISO 8601
+    source_hash: str  # Hash of original document
     block_count: int
-    total_tokens: int       # Sum of all block token counts
-    embedding_model: str    # e.g. "all-MiniLM-L6-v2"
-    embedding_dim: int      # e.g. 384
-    original_size: int      # Original document size in bytes
-    compressed_size: int    # Total .zpf file size
+    total_tokens: int  # Sum of all block token counts
+    embedding_model: str  # e.g. "all-MiniLM-L6-v2"
+    embedding_dim: int  # e.g. 384
+    original_size: int  # Original document size in bytes
+    compressed_size: int  # Total .zpf file size
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_json(self) -> bytes:

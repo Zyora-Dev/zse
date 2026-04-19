@@ -71,6 +71,7 @@ def write_zpf(
         offset += size
 
     import json
+
     index_json = json.dumps(index_entries, separators=(",", ":")).encode("utf-8")
 
     # ---- Collect embeddings ----

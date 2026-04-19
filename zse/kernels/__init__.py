@@ -22,9 +22,11 @@ try:
         TritonInt4Linear,
         is_triton_available,
     )
+
     _TRITON_INT4_AVAILABLE = is_triton_available()
 except ImportError:
     pass
+
 
 def is_triton_available():
     return _TRITON_INT4_AVAILABLE
@@ -49,6 +51,7 @@ try:
         is_triton_v2_available,
         get_triton_v2_error,
     )
+
     _TRITON_V2_AVAILABLE = is_triton_v2_available()
     _triton_v2_error = get_triton_v2_error()
 except ImportError as e:
@@ -56,9 +59,11 @@ except ImportError as e:
 except Exception as e:
     _triton_v2_error = f"Error: {e}"
 
+
 def is_triton_v2_available():
     """Check if optimized Triton v2 kernels are available."""
     return _TRITON_V2_AVAILABLE
+
 
 def get_triton_v2_error():
     """Get error message if Triton v2 isn't available."""
@@ -71,6 +76,7 @@ def get_triton_v2_error():
 int4_matmul = None
 Int4Linear = None
 int4_matmul_pytorch = None
+
 
 def is_kernel_available():
     return False

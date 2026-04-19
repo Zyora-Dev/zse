@@ -21,16 +21,16 @@ from torch.utils.data import Dataset
 @dataclass
 class DatasetConfig:
     """Configuration for dataset processing."""
-    
+
     max_length: int = 2048
     """Maximum sequence length."""
-    
+
     truncation: bool = True
     """Whether to truncate sequences longer than max_length."""
-    
+
     padding: str = "max_length"
     """Padding strategy: 'max_length', 'longest', or False."""
-    
+
     mask_prompt: bool = True
     """Whether to mask prompt tokens in labels (only train on response)."""
 
@@ -38,10 +38,10 @@ class DatasetConfig:
 class ZSEDataset(Dataset):
     """
     Base dataset class for ZSE training.
-    
+
     Handles tokenization and formatting.
     """
-    
+
     def __init__(
         self,
         data: List[Dict[str, Any]],
@@ -51,17 +51,17 @@ class ZSEDataset(Dataset):
         self.data = data
         self.tokenizer = tokenizer
         self.config = config or DatasetConfig()
-        
+
         # Ensure tokenizer has pad token
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
-    
+
     def __len__(self) -> int:
         return len(self.data)
-    
+
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         raise NotImplementedError("Subclasses must implement __getitem__")
-    
+
     def _tokenize(
         self,
         text: str,
@@ -70,7 +70,7 @@ class ZSEDataset(Dataset):
         """Tokenize text with configured settings."""
         if add_eos and not text.endswith(self.tokenizer.eos_token):
             text = text + self.tokenizer.eos_token
-        
+
         encoded = self.tokenizer(
             text,
             max_length=self.config.max_length,
@@ -78,17 +78,17 @@ class ZSEDataset(Dataset):
             padding=self.config.padding,
             return_tensors="pt",
         )
-        
+
         return {
-            'input_ids': encoded['input_ids'].squeeze(0),
-            'attention_mask': encoded['attention_mask'].squeeze(0),
+            "input_ids": encoded["input_ids"].squeeze(0),
+            "attention_mask": encoded["attention_mask"].squeeze(0),
         }
 
 
 class ChatDataset(ZSEDataset):
     """
     Dataset for chat/conversation format.
-    
+
     Expected data format:
         [
             {
@@ -101,38 +101,38 @@ class ChatDataset(ZSEDataset):
             ...
         ]
     """
-    
+
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         item = self.data[idx]
-        messages = item['messages']
-        
+        messages = item["messages"]
+
         # Apply chat template
         text = self.tokenizer.apply_chat_template(
             messages,
             tokenize=False,
             add_generation_prompt=False,
         )
-        
+
         # Tokenize full conversation
         encoded = self._tokenize(text)
-        
+
         # Create labels
-        labels = encoded['input_ids'].clone()
-        
+        labels = encoded["input_ids"].clone()
+
         if self.config.mask_prompt:
             # Find where assistant response starts and mask everything before
             # This is approximate - works for most chat formats
             labels = self._mask_prompt_tokens(messages, labels)
-        
+
         # Mask padding tokens
-        labels[encoded['attention_mask'] == 0] = -100
-        
+        labels[encoded["attention_mask"] == 0] = -100
+
         return {
-            'input_ids': encoded['input_ids'],
-            'attention_mask': encoded['attention_mask'],
-            'labels': labels,
+            "input_ids": encoded["input_ids"],
+            "attention_mask": encoded["attention_mask"],
+            "labels": labels,
         }
-    
+
     def _mask_prompt_tokens(
         self,
         messages: List[Dict],
@@ -142,26 +142,26 @@ class ChatDataset(ZSEDataset):
         # Tokenize just the prompt parts
         prompt_messages = []
         for msg in messages:
-            if msg['role'] == 'assistant':
+            if msg["role"] == "assistant":
                 break
             prompt_messages.append(msg)
-        
+
         if prompt_messages:
             prompt_text = self.tokenizer.apply_chat_template(
                 prompt_messages,
                 tokenize=False,
                 add_generation_prompt=True,
             )
-            prompt_len = len(self.tokenizer(prompt_text)['input_ids'])
+            prompt_len = len(self.tokenizer(prompt_text)["input_ids"])
             labels[:prompt_len] = -100
-        
+
         return labels
 
 
 class InstructionDataset(ZSEDataset):
     """
     Dataset for instruction-following format.
-    
+
     Expected data format:
         [
             {
@@ -172,7 +172,7 @@ class InstructionDataset(ZSEDataset):
             ...
         ]
     """
-    
+
     def __init__(
         self,
         data: List[Dict[str, Any]],
@@ -181,25 +181,20 @@ class InstructionDataset(ZSEDataset):
         prompt_template: Optional[str] = None,
     ):
         super().__init__(data, tokenizer, config)
-        
+
         self.prompt_template = prompt_template or (
-            "### Instruction:\n{instruction}\n\n"
-            "### Input:\n{input}\n\n"
-            "### Response:\n{output}"
+            "### Instruction:\n{instruction}\n\n### Input:\n{input}\n\n### Response:\n{output}"
         )
-        
-        self.prompt_template_no_input = (
-            "### Instruction:\n{instruction}\n\n"
-            "### Response:\n{output}"
-        )
-    
+
+        self.prompt_template_no_input = "### Instruction:\n{instruction}\n\n### Response:\n{output}"
+
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         item = self.data[idx]
-        
-        instruction = item.get('instruction', '')
-        input_text = item.get('input', '')
-        output = item.get('output', item.get('response', ''))
-        
+
+        instruction = item.get("instruction", "")
+        input_text = item.get("input", "")
+        output = item.get("output", item.get("response", ""))
+
         # Format prompt
         if input_text:
             full_text = self.prompt_template.format(
@@ -210,7 +205,7 @@ class InstructionDataset(ZSEDataset):
             prompt_text = self.prompt_template.format(
                 instruction=instruction,
                 input=input_text,
-                output='',
+                output="",
             )
         else:
             full_text = self.prompt_template_no_input.format(
@@ -219,33 +214,33 @@ class InstructionDataset(ZSEDataset):
             )
             prompt_text = self.prompt_template_no_input.format(
                 instruction=instruction,
-                output='',
+                output="",
             )
-        
+
         # Tokenize
         encoded = self._tokenize(full_text)
-        
+
         # Create labels
-        labels = encoded['input_ids'].clone()
-        
+        labels = encoded["input_ids"].clone()
+
         if self.config.mask_prompt:
-            prompt_len = len(self.tokenizer(prompt_text)['input_ids'])
+            prompt_len = len(self.tokenizer(prompt_text)["input_ids"])
             labels[:prompt_len] = -100
-        
+
         # Mask padding
-        labels[encoded['attention_mask'] == 0] = -100
-        
+        labels[encoded["attention_mask"] == 0] = -100
+
         return {
-            'input_ids': encoded['input_ids'],
-            'attention_mask': encoded['attention_mask'],
-            'labels': labels,
+            "input_ids": encoded["input_ids"],
+            "attention_mask": encoded["attention_mask"],
+            "labels": labels,
         }
 
 
 class TextDataset(ZSEDataset):
     """
     Simple dataset for raw text (continued pretraining).
-    
+
     Expected data format:
         [
             {"text": "First document..."},
@@ -253,21 +248,21 @@ class TextDataset(ZSEDataset):
             ...
         ]
     """
-    
+
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         item = self.data[idx]
-        text = item.get('text', item.get('content', ''))
-        
+        text = item.get("text", item.get("content", ""))
+
         encoded = self._tokenize(text)
-        
+
         # For language modeling, labels = input_ids
-        labels = encoded['input_ids'].clone()
-        labels[encoded['attention_mask'] == 0] = -100
-        
+        labels = encoded["input_ids"].clone()
+        labels[encoded["attention_mask"] == 0] = -100
+
         return {
-            'input_ids': encoded['input_ids'],
-            'attention_mask': encoded['attention_mask'],
-            'labels': labels,
+            "input_ids": encoded["input_ids"],
+            "attention_mask": encoded["attention_mask"],
+            "labels": labels,
         }
 
 
@@ -280,50 +275,50 @@ def prepare_dataset(
 ) -> ZSEDataset:
     """
     Create a dataset from various sources.
-    
+
     Args:
         data_source: Path to JSON/JSONL file, or list of dicts
         tokenizer: Tokenizer to use
         dataset_type: 'chat', 'instruction', 'text', or 'auto' (detect)
         config: Dataset configuration
         split: For HuggingFace datasets, which split to use
-        
+
     Returns:
         Appropriate ZSEDataset subclass
     """
     # Load data if path
     if isinstance(data_source, (str, Path)):
         data_source = Path(data_source)
-        
-        if data_source.suffix == '.jsonl':
+
+        if data_source.suffix == ".jsonl":
             data = []
             with open(data_source) as f:
                 for line in f:
                     data.append(json.loads(line))
-        elif data_source.suffix == '.json':
+        elif data_source.suffix == ".json":
             with open(data_source) as f:
                 data = json.load(f)
         else:
             raise ValueError(f"Unsupported file format: {data_source.suffix}")
     else:
         data = data_source
-    
+
     # Auto-detect type
     if dataset_type == "auto":
         sample = data[0] if data else {}
-        
-        if 'messages' in sample:
+
+        if "messages" in sample:
             dataset_type = "chat"
-        elif 'instruction' in sample:
+        elif "instruction" in sample:
             dataset_type = "instruction"
-        elif 'text' in sample or 'content' in sample:
+        elif "text" in sample or "content" in sample:
             dataset_type = "text"
         else:
             raise ValueError(f"Cannot auto-detect dataset type from keys: {sample.keys()}")
-    
+
     # Create dataset
     config = config or DatasetConfig()
-    
+
     if dataset_type == "chat":
         return ChatDataset(data, tokenizer, config)
     elif dataset_type == "instruction":
@@ -344,7 +339,7 @@ def load_dataset_from_hub(
 ) -> ZSEDataset:
     """
     Load dataset from HuggingFace Hub.
-    
+
     Args:
         dataset_name: HuggingFace dataset name
         tokenizer: Tokenizer to use
@@ -352,7 +347,7 @@ def load_dataset_from_hub(
         dataset_type: 'chat', 'instruction', 'text', or 'auto'
         config: Dataset configuration
         max_samples: Maximum samples to load
-        
+
     Returns:
         ZSEDataset
     """
@@ -360,13 +355,13 @@ def load_dataset_from_hub(
         from datasets import load_dataset
     except ImportError:
         raise ImportError("datasets library required: pip install datasets")
-    
+
     hf_dataset = load_dataset(dataset_name, split=split)
-    
+
     if max_samples:
         hf_dataset = hf_dataset.select(range(min(max_samples, len(hf_dataset))))
-    
+
     # Convert to list of dicts
     data = [dict(item) for item in hf_dataset]
-    
+
     return prepare_dataset(data, tokenizer, dataset_type, config)

@@ -3,16 +3,17 @@ ZSE Enhanced Playground UI
 
 Beautiful chat interface with:
 - Chat bubbles with markdown rendering
-- Code syntax highlighting  
+- Code syntax highlighting
 - Conversation sidebar
 - System prompts and parameters
 - Streaming responses
 - Dark/light theme
 """
 
+
 def get_enhanced_playground_html() -> str:
     """Generate the enhanced playground HTML."""
-    return '''<!DOCTYPE html>
+    return """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -1173,4 +1174,4 @@ def get_enhanced_playground_html() -> str:
         }
     </script>
 </body>
-</html>'''
+</html>"""

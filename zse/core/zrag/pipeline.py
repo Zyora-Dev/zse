@@ -294,6 +294,7 @@ class RAGPipeline:
         highest-scoring semantic blocks.
         """
         from zse.core.zrag.vector_store import _LIST_PATTERN
+
         effective_top_k = 15 if _LIST_PATTERN.search(query) else top_k
         results = self.search(query, top_k=effective_top_k, doc_filter=doc_filter)
 
@@ -335,16 +336,18 @@ class RAGPipeline:
         for zpf in zpf_dir.glob("*.zpf"):
             try:
                 reader = ZPFReader(zpf)
-                files.append({
-                    "path": str(zpf),
-                    "doc_id": reader.header.doc_id,
-                    "title": reader.header.title,
-                    "source_type": reader.header.source_type,
-                    "block_count": reader.header.block_count,
-                    "total_tokens": reader.header.total_tokens,
-                    "original_size": reader.header.original_size,
-                    "compressed_size": reader.header.compressed_size,
-                })
+                files.append(
+                    {
+                        "path": str(zpf),
+                        "doc_id": reader.header.doc_id,
+                        "title": reader.header.title,
+                        "source_type": reader.header.source_type,
+                        "block_count": reader.header.block_count,
+                        "total_tokens": reader.header.total_tokens,
+                        "original_size": reader.header.original_size,
+                        "compressed_size": reader.header.compressed_size,
+                    }
+                )
             except Exception:
                 files.append({"path": str(zpf), "error": "unreadable"})
         return files
@@ -356,14 +359,10 @@ class RAGPipeline:
         summaries = reader.get_block_summaries()
 
         compression_ratio = (
-            header.original_size / header.compressed_size
-            if header.compressed_size > 0
-            else 0
+            header.original_size / header.compressed_size if header.compressed_size > 0 else 0
         )
         token_ratio = (
-            header.total_tokens / (header.original_size // 4)
-            if header.original_size > 0
-            else 0
+            header.total_tokens / (header.original_size // 4) if header.original_size > 0 else 0
         )
 
         return {
@@ -423,25 +422,36 @@ class RAGPipeline:
         if format == "jsonl":
             with open(out, "w", encoding="utf-8") as f:
                 # Header line
-                f.write(json.dumps({
-                    "type": "header",
-                    "doc_id": header.doc_id,
-                    "title": header.title,
-                    "source_type": header.source_type,
-                    "block_count": header.block_count,
-                    "total_tokens": header.total_tokens,
-                    "embedding_model": header.embedding_model,
-                    "original_size": header.original_size,
-                }) + "\n")
+                f.write(
+                    json.dumps(
+                        {
+                            "type": "header",
+                            "doc_id": header.doc_id,
+                            "title": header.title,
+                            "source_type": header.source_type,
+                            "block_count": header.block_count,
+                            "total_tokens": header.total_tokens,
+                            "embedding_model": header.embedding_model,
+                            "original_size": header.original_size,
+                        }
+                    )
+                    + "\n"
+                )
                 for i, b in enumerate(blocks):
-                    f.write(json.dumps({
-                        "type": "block",
-                        "index": i,
-                        "block_type": BlockType(b.block_type).name,
-                        "content": b.content,
-                        "token_count": b.token_count,
-                        "summary": b.summary,
-                    }, ensure_ascii=False) + "\n")
+                    f.write(
+                        json.dumps(
+                            {
+                                "type": "block",
+                                "index": i,
+                                "block_type": BlockType(b.block_type).name,
+                                "content": b.content,
+                                "token_count": b.token_count,
+                                "summary": b.summary,
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
 
         elif format == "markdown":
             with open(out, "w", encoding="utf-8") as f:
@@ -561,6 +571,7 @@ class RAGPipeline:
                 reindexed += 1
             except Exception as e:
                 import sys
+
                 print(f"Warning: failed to reindex {zpf.name}: {e}", file=sys.stderr)
 
         return {

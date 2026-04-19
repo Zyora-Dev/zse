@@ -23,21 +23,21 @@ def get_kernel_path() -> Path:
 def _compile_kernels():
     """Compile CUDA kernels using PyTorch's JIT compilation."""
     global _COMPILED_KERNEL, _COMPILE_ERROR
-    
+
     if _COMPILED_KERNEL is not None:
         return _COMPILED_KERNEL
-    
+
     if _COMPILE_ERROR is not None:
         raise _COMPILE_ERROR
-    
+
     try:
         from torch.utils.cpp_extension import load_inline
-        
+
         # Read CUDA source
         kernel_path = get_kernel_path()
-        with open(kernel_path, 'r') as f:
+        with open(kernel_path, "r") as f:
             cuda_src = f.read()
-        
+
         # C++ wrapper code
         cpp_src = """
 #include <torch/extension.h>
@@ -148,7 +148,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("int4_gemv", &int4_gemv, "INT4 GEMV (CUDA)");
 }
 """
-        
+
         # Compile
         _COMPILED_KERNEL = load_inline(
             name="zse_int4_matmul",
@@ -162,9 +162,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
             ],
             verbose=False,
         )
-        
+
         return _COMPILED_KERNEL
-    
+
     except Exception as e:
         _COMPILE_ERROR = RuntimeError(f"Failed to compile INT4 kernels: {e}")
         raise _COMPILE_ERROR
@@ -181,12 +181,13 @@ def is_kernel_available() -> bool:
 
 class Int4MatmulFunction(torch.autograd.Function):
     """Autograd function for INT4 matmul (forward only, no backward for inference)."""
-    
+
     @staticmethod
-    def forward(ctx, input: torch.Tensor, weight: torch.Tensor, 
-                scales: torch.Tensor, group_size: int) -> torch.Tensor:
+    def forward(
+        ctx, input: torch.Tensor, weight: torch.Tensor, scales: torch.Tensor, group_size: int
+    ) -> torch.Tensor:
         kernel = _compile_kernels()
-        
+
         # Use GEMM for batched input, GEMV for single vector
         input_flat = input.view(-1, input.size(-1))
         if input_flat.size(0) == 1:
@@ -197,20 +198,17 @@ class Int4MatmulFunction(torch.autograd.Function):
 
 
 def int4_matmul(
-    input: torch.Tensor,
-    weight: torch.Tensor,
-    scales: torch.Tensor,
-    group_size: int = 128
+    input: torch.Tensor, weight: torch.Tensor, scales: torch.Tensor, group_size: int = 128
 ) -> torch.Tensor:
     """
     Perform matrix multiplication with INT4 quantized weights.
-    
+
     Args:
         input: Input tensor [*, K] in float16
         weight: Packed INT4 weights [N, K/2] as uint8
         scales: Per-group scales [N, num_groups] in float16
         group_size: Number of elements per quantization group
-    
+
     Returns:
         Output tensor [*, N] in float16
     """
@@ -220,11 +218,11 @@ def int4_matmul(
 class Int4Linear(torch.nn.Module):
     """
     Linear layer with INT4 quantized weights using custom CUDA kernel.
-    
+
     This is a drop-in replacement for QuantizedLinearZSE that uses
     efficient CUDA kernels instead of Python dequantization.
     """
-    
+
     def __init__(
         self,
         in_features: int,
@@ -232,13 +230,13 @@ class Int4Linear(torch.nn.Module):
         weight_packed: torch.Tensor,
         scales: torch.Tensor,
         bias: Optional[torch.Tensor] = None,
-        group_size: int = 128
+        group_size: int = 128,
     ):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.group_size = group_size
-        
+
         # Register buffers (not parameters, since we're not training)
         self.register_buffer("weight_packed", weight_packed)
         self.register_buffer("scales", scales)
@@ -246,50 +244,47 @@ class Int4Linear(torch.nn.Module):
             self.register_buffer("bias", bias)
         else:
             self.register_buffer("bias", None)
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Ensure input is float16
         if x.dtype != torch.float16:
             x = x.half()
-        
+
         # Use custom CUDA kernel
         output = int4_matmul(x, self.weight_packed, self.scales, self.group_size)
-        
+
         if self.bias is not None:
             output = output + self.bias
-        
+
         return output
-    
+
     def extra_repr(self) -> str:
         return f"in_features={self.in_features}, out_features={self.out_features}, group_size={self.group_size}"
 
 
 # Fallback implementation using PyTorch (for debugging or CPU)
 def int4_matmul_pytorch(
-    input: torch.Tensor,
-    weight_packed: torch.Tensor,
-    scales: torch.Tensor,
-    group_size: int = 128
+    input: torch.Tensor, weight_packed: torch.Tensor, scales: torch.Tensor, group_size: int = 128
 ) -> torch.Tensor:
     """
     Pure PyTorch fallback for INT4 matmul (slow but works everywhere).
     """
     N, half_K = weight_packed.shape
     K = half_K * 2
-    
+
     # Unpack INT4
     low = (weight_packed & 0x0F).to(torch.int8) - 8
     high = (weight_packed >> 4).to(torch.int8) - 8
     weight_unpacked = torch.stack([low, high], dim=-1).view(N, K)
-    
+
     # Dequantize
     num_groups = (K + group_size - 1) // group_size
     weight_float = weight_unpacked.float()
-    
+
     for g in range(num_groups):
         start = g * group_size
         end = min(start + group_size, K)
-        weight_float[:, start:end] *= scales[:, g:g+1].float()
-    
+        weight_float[:, start:end] *= scales[:, g : g + 1].float()
+
     # Matmul
     return torch.matmul(input.float(), weight_float.T).to(input.dtype)

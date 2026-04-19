@@ -37,9 +37,7 @@ test_image = (
     )
 )
 
-test_image_with_code = test_image.add_local_dir(
-    ZSE_ROOT, remote_path="/root/zse"
-)
+test_image_with_code = test_image.add_local_dir(ZSE_ROOT, remote_path="/root/zse")
 
 
 @app.function(
@@ -51,6 +49,7 @@ test_image_with_code = test_image.add_local_dir(
 def test_speculative_zse():
     """Test speculative decoding with .zse format models."""
     import subprocess
+
     subprocess.check_call(
         [sys.executable, "-m", "pip", "install", "-e", ".", "-q"],
         cwd="/root/zse",
@@ -61,11 +60,11 @@ def test_speculative_zse():
     import torch
     from huggingface_hub import hf_hub_download
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"ZSE Speculative Decoding - .zse Format Test")
     print(f"GPU: {torch.cuda.get_device_name(0)}")
     print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     TARGET_REPO = "zse-zllm/Qwen2.5-7B-Instruct-zse-int4"
     TARGET_FILE = "Qwen2.5-7B-Instruct-zse-int4.zse"
@@ -108,23 +107,25 @@ def test_speculative_zse():
     # ── Verify KV cache support ─────────────────────────────────
     print("Verifying .zse model supports use_cache=True...")
     messages = [{"role": "user", "content": PROMPT}]
-    prompt_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    prompt_text = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
     input_ids = tokenizer(prompt_text, return_tensors="pt").input_ids.to("cuda")
     prompt_len = input_ids.shape[1]
     print(f"  Prompt tokens: {prompt_len}")
 
     with torch.no_grad():
         out = target_model(input_ids=input_ids, use_cache=True)
-        assert hasattr(out, 'logits'), "Model output missing .logits"
-        assert hasattr(out, 'past_key_values'), "Model output missing .past_key_values"
+        assert hasattr(out, "logits"), "Model output missing .logits"
+        assert hasattr(out, "past_key_values"), "Model output missing .past_key_values"
         assert out.past_key_values is not None, "past_key_values is None"
         print(f"  .logits shape: {out.logits.shape}")
         # Handle DynamicCache (transformers 5.x .layers, 4.x .key_cache, or legacy tuple)
         pv = out.past_key_values
-        if hasattr(pv, 'layers'):
+        if hasattr(pv, "layers"):
             num_layers = len(pv.layers)
             kv_shape = pv.layers[0].keys.shape
-        elif hasattr(pv, 'key_cache'):
+        elif hasattr(pv, "key_cache"):
             num_layers = len(pv.key_cache)
             kv_shape = pv.key_cache[0].shape
         else:
@@ -135,9 +136,9 @@ def test_speculative_zse():
     print("  KV cache support: OK\n")
 
     # ── Test 1: Baseline (.zse model, standard decode) ──────────
-    print(f"{'─'*60}")
+    print(f"{'─' * 60}")
     print("TEST 1: Standard Decoding (.zse target model)")
-    print(f"{'─'*60}")
+    print(f"{'─' * 60}")
 
     torch.cuda.synchronize()
     start = time.perf_counter()
@@ -163,9 +164,9 @@ def test_speculative_zse():
     print()
 
     # ── Test 2: Speculative (.zse target + .zse draft) ──────────
-    print(f"{'─'*60}")
+    print(f"{'─' * 60}")
     print("TEST 2: Speculative Decoding (.zse target + .zse draft)")
-    print(f"{'─'*60}")
+    print(f"{'─' * 60}")
 
     from zse.core.zspec import SpeculativeDecoder, SpeculativeConfig
 
@@ -216,9 +217,9 @@ def test_speculative_zse():
     print()
 
     # ── Test 3: Full Pipeline with .zse ─────────────────────────
-    print(f"{'─'*60}")
+    print(f"{'─' * 60}")
     print("TEST 3: Full Pipeline (SpeculativeTextGenerator + .zse)")
-    print(f"{'─'*60}")
+    print(f"{'─' * 60}")
 
     from zse.engine.generation import SpeculativeTextGenerator, SamplingParams
 
@@ -256,17 +257,17 @@ def test_speculative_zse():
     print()
 
     # ── Summary ─────────────────────────────────────────────────
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print("SUMMARY (.zse Format)")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"  Target:       .zse INT4 (Qwen 7B)")
     print(f"  Draft:        .zse INT4 (Qwen 0.5B)")
     print(f"  Baseline:     {baseline_tps:.1f} tok/s")
-    print(f"  Speculative:  {spec_tps:.1f} tok/s ({spec_tps/baseline_tps:.2f}x)")
-    print(f"  Pipeline:     {pipeline_tps:.1f} tok/s ({pipeline_tps/baseline_tps:.2f}x)")
+    print(f"  Speculative:  {spec_tps:.1f} tok/s ({spec_tps / baseline_tps:.2f}x)")
+    print(f"  Pipeline:     {pipeline_tps:.1f} tok/s ({pipeline_tps / baseline_tps:.2f}x)")
     print(f"  Accept rate:  {stats['avg_acceptance_rate']:.1%}")
-    print(f"  VRAM used:    {torch.cuda.memory_allocated()/1024**3:.2f} GB")
-    print(f"{'='*60}")
+    print(f"  VRAM used:    {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+    print(f"{'=' * 60}")
 
     passed = spec_tokens > 0 and spec_tps > 0
     status = "PASS" if passed else "FAIL"
@@ -295,8 +296,8 @@ def main():
 
     result = test_speculative_zse.remote()
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("RESULT FROM MODAL:")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     for k, v in result.items():
         print(f"  {k}: {v}")

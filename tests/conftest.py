@@ -23,12 +23,8 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')"
     )
-    config.addinivalue_line(
-        "markers", "cuda: marks tests requiring CUDA GPU"
-    )
-    config.addinivalue_line(
-        "markers", "integration: marks integration tests"
-    )
+    config.addinivalue_line("markers", "cuda: marks tests requiring CUDA GPU")
+    config.addinivalue_line("markers", "integration: marks integration tests")
 
 
 @pytest.fixture(scope="session")
@@ -42,6 +38,7 @@ def has_cuda() -> bool:
     """Check if CUDA is available."""
     try:
         import torch
+
         return torch.cuda.is_available()
     except ImportError:
         return False
@@ -52,6 +49,7 @@ def cuda_device_count() -> int:
     """Return number of CUDA devices."""
     try:
         import torch
+
         if torch.cuda.is_available():
             return torch.cuda.device_count()
     except ImportError:
@@ -64,6 +62,7 @@ def gpu_memory_gb() -> float:
     """Return total GPU memory in GB (first GPU)."""
     try:
         import torch
+
         if torch.cuda.is_available():
             props = torch.cuda.get_device_properties(0)
             return props.total_memory / (1024**3)
@@ -95,16 +94,14 @@ server:
 
 def skip_if_no_cuda(func):
     """Decorator to skip test if CUDA is not available."""
-    return pytest.mark.skipif(
-        not _cuda_available(),
-        reason="CUDA not available"
-    )(func)
+    return pytest.mark.skipif(not _cuda_available(), reason="CUDA not available")(func)
 
 
 def _cuda_available() -> bool:
     """Check if CUDA is available."""
     try:
         import torch
+
         return torch.cuda.is_available()
     except ImportError:
         return False

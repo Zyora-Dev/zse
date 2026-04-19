@@ -25,13 +25,13 @@ Usage:
     # Convert HuggingFace model to .zse
     from zse.format import ZSEWriter, convert_model
     convert_model("meta-llama/Llama-3-8B", "llama-8b.zse", quantization="int4")
-    
+
     # Load .zse model
     from zse.format import ZSEReader, load_zse
-    
+
     # Full load
     state_dict, tokenizer, info = load_zse("model.zse")
-    
+
     # Streaming load (for large models)
     with ZSEReader("model.zse") as reader:
         for layer_idx, layer_tensors in reader.iter_layers():

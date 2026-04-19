@@ -50,13 +50,18 @@ _NOISE_PATTERNS = [
     re.compile(r"^\s*page\s+\d+\s*(of\s*\d+)?\s*$", re.IGNORECASE),
     # Social/sharing
     re.compile(r"^\s*share\s*(this|on)\s*(facebook|twitter|linkedin|x|reddit)", re.IGNORECASE),
-    re.compile(r"^\s*follow\s*us\s*:?\s*(on)?\s*(twitter|facebook|linkedin|github|discord|youtube)", re.IGNORECASE),
+    re.compile(
+        r"^\s*follow\s*us\s*:?\s*(on)?\s*(twitter|facebook|linkedin|github|discord|youtube)",
+        re.IGNORECASE,
+    ),
     re.compile(r"^\s*like\s*(this|us)\s*on\s*facebook", re.IGNORECASE),
     re.compile(r"^\s*tweet\s*this\s*$", re.IGNORECASE),
     # Subscription/newsletter
     re.compile(r"^\s*subscribe\s*(to)?\s*(our|the)?\s*newsletter", re.IGNORECASE),
     re.compile(r"^\s*enter\s*(your)?\s*email", re.IGNORECASE),
-    re.compile(r"^\s*sign\s*up\s*(for|to)\s*(our|the)?\s*(newsletter|updates|mailing)", re.IGNORECASE),
+    re.compile(
+        r"^\s*sign\s*up\s*(for|to)\s*(our|the)?\s*(newsletter|updates|mailing)", re.IGNORECASE
+    ),
     re.compile(r"^\s*\[?\s*subscribe\s*\]?\s*$", re.IGNORECASE),
     # Comments
     re.compile(r"^\s*comments?\s*\(\d+\)\s*$", re.IGNORECASE),
@@ -202,9 +207,15 @@ def _compress_text(text: str, block_type: BlockType) -> str:
     _FILLER_PHRASES = [
         (r"\bit\s+is\s+(?:important|worth|interesting)\s+to\s+note\s+that\b", ""),
         (r"\bit\s+(?:should|is\s+important\s+to)\s+be\s+noted\s+that\b", ""),
-        (r"\bas\s+(?:we\s+)?(?:mentioned|discussed|described|noted|stated)\s+(?:above|earlier|previously|before)\b", ""),
+        (
+            r"\bas\s+(?:we\s+)?(?:mentioned|discussed|described|noted|stated)\s+(?:above|earlier|previously|before)\b",
+            "",
+        ),
         (r"\bas\s+(?:you\s+)?(?:can|may|might)\s+(?:have\s+)?(?:noticed|seen|observed)\b", ""),
-        (r"\bin\s+this\s+(?:section|chapter|article|paper|document|guide),?\s*(?:we\s+will\s+)?", ""),
+        (
+            r"\bin\s+this\s+(?:section|chapter|article|paper|document|guide),?\s*(?:we\s+will\s+)?",
+            "",
+        ),
         (r"\blet'?s?\s+(?:take\s+a\s+)?(?:look\s+at|explore|examine|consider|discuss)\b", ""),
         (r"\bnow\s+(?:let'?s?|we\s+will|we)\s+", ""),
         (r"\bbasically,?\s*", ""),
@@ -215,20 +226,41 @@ def _compress_text(text: str, block_type: BlockType) -> str:
         (r"\bin\s+simple\s+terms,?\s*", ""),
         (r"\bneedless\s+to\s+say,?\s*", ""),
         (r"\bto\s+put\s+it\s+(?:simply|another\s+way|differently),?\s*", ""),
-        (r"\bfor\s+(?:the\s+sake|purposes?)\s+of\s+(?:this|our)\s+(?:discussion|article|document),?\s*", ""),
+        (
+            r"\bfor\s+(?:the\s+sake|purposes?)\s+of\s+(?:this|our)\s+(?:discussion|article|document),?\s*",
+            "",
+        ),
         (r"\bwithout\s+(?:further|any\s+further)\s+ado,?\s*", ""),
         (r"\bhaving\s+said\s+that,?\s*", ""),
         (r"\bthat\s+being\s+said,?\s*", ""),
         (r"\bwith\s+that\s+(?:in\s+mind|said),?\s*", ""),
         (r"\bas\s+(?:a\s+matter\s+of\s+fact|the\s+name\s+suggests?),?\s*", ""),
         # Meta-commentary about the document itself
-        (r"\bthe\s+following\s+(?:section|table|list|diagram|figure|example)\s+(?:shows?|describes?|illustrates?|explains?|provides?|contains?|presents?|summarizes?)\b", ""),
-        (r"\bwe\s+(?:will\s+)?(?:now\s+)?(?:discuss|explore|examine|look\s+at|consider|turn\s+(?:to|our\s+attention\s+to))\b", ""),
-        (r"\b(?:the\s+)?(?:above|below|following|preceding)\s+(?:discussion|section|example|table|diagram|figure)\s+(?:shows?|demonstrates?|illustrates?)\b", ""),
-        (r"\bas\s+we\s+(?:will\s+)?(?:see|discuss|show|demonstrate)\s+(?:later|below|in\s+the\s+next)\b", ""),
+        (
+            r"\bthe\s+following\s+(?:section|table|list|diagram|figure|example)\s+(?:shows?|describes?|illustrates?|explains?|provides?|contains?|presents?|summarizes?)\b",
+            "",
+        ),
+        (
+            r"\bwe\s+(?:will\s+)?(?:now\s+)?(?:discuss|explore|examine|look\s+at|consider|turn\s+(?:to|our\s+attention\s+to))\b",
+            "",
+        ),
+        (
+            r"\b(?:the\s+)?(?:above|below|following|preceding)\s+(?:discussion|section|example|table|diagram|figure)\s+(?:shows?|demonstrates?|illustrates?)\b",
+            "",
+        ),
+        (
+            r"\bas\s+we\s+(?:will\s+)?(?:see|discuss|show|demonstrate)\s+(?:later|below|in\s+the\s+next)\b",
+            "",
+        ),
         (r"\bplease\s+(?:note|keep\s+in\s+mind|be\s+(?:aware|advised))\s+that\b", "note:"),
-        (r"\bit\s+is\s+(?:recommended|advised|suggested)\s+(?:that\s+(?:you|one)\s+)?(?:to\s+)?", ""),
-        (r"\byou\s+(?:should|may\s+want\s+to|might\s+want\s+to|can|are\s+able\s+to|may\s+wish\s+to)\b", ""),
+        (
+            r"\bit\s+is\s+(?:recommended|advised|suggested)\s+(?:that\s+(?:you|one)\s+)?(?:to\s+)?",
+            "",
+        ),
+        (
+            r"\byou\s+(?:should|may\s+want\s+to|might\s+want\s+to|can|are\s+able\s+to|may\s+wish\s+to)\b",
+            "",
+        ),
     ]
 
     if block_type != BlockType.CODE:
@@ -258,7 +290,10 @@ def _compress_text(text: str, block_type: BlockType) -> str:
         (r"\bprior\s+to\b", "before"),
         (r"\bsubsequent\s+to\b", "after"),
         (r"\bfollowing\s+(?:the\s+completion\s+of|this)\b", "after"),
-        (r"\ba\s+(?:large|great|significant|substantial|considerable)\s+(?:number|amount|quantity|degree|portion)\s+of\b", "many"),
+        (
+            r"\ba\s+(?:large|great|significant|substantial|considerable)\s+(?:number|amount|quantity|degree|portion)\s+of\b",
+            "many",
+        ),
         (r"\ba\s+(?:small|limited|minimal)\s+(?:number|amount|quantity)\s+of\b", "few"),
         (r"\bthe\s+vast\s+majority\s+of\b", "most"),
         (r"\bin\s+(?:close\s+)?proximity\s+to\b", "near"),
@@ -493,16 +528,33 @@ class SemanticChunker:
         """Detect entire sections that are noise (Related Articles, etc.)."""
         heading = (section.heading or "").strip().lower()
         _NOISE_HEADINGS = {
-            "related articles", "related posts", "related content",
-            "related reading", "recommended articles", "recommended reading",
-            "recommended for you", "see also", "you might also like",
-            "you may also like", "further reading",
-            "comments", "leave a comment", "leave a reply",
-            "share this", "share this article", "share this post",
-            "about the author", "author bio",
-            "advertisement", "sponsored", "promoted",
-            "newsletter", "subscribe", "sign up",
-            "footer", "sidebar",
+            "related articles",
+            "related posts",
+            "related content",
+            "related reading",
+            "recommended articles",
+            "recommended reading",
+            "recommended for you",
+            "see also",
+            "you might also like",
+            "you may also like",
+            "further reading",
+            "comments",
+            "leave a comment",
+            "leave a reply",
+            "share this",
+            "share this article",
+            "share this post",
+            "about the author",
+            "author bio",
+            "advertisement",
+            "sponsored",
+            "promoted",
+            "newsletter",
+            "subscribe",
+            "sign up",
+            "footer",
+            "sidebar",
         }
         if heading in _NOISE_HEADINGS:
             return True
@@ -636,9 +688,7 @@ class SemanticChunker:
 
         return blocks
 
-    def _split_oversized_block(
-        self, block: SemanticBlock, max_tokens: int
-    ) -> List[SemanticBlock]:
+    def _split_oversized_block(self, block: SemanticBlock, max_tokens: int) -> List[SemanticBlock]:
         """Split a block that exceeds max_tokens into smaller sub-blocks."""
         text = block.content
         sentences = re.split(r"(?<=[.!?\n])\s+", text)
@@ -670,15 +720,17 @@ class SemanticChunker:
             token_count = _estimate_tokens(part)
             if token_count < self.min_block_tokens:
                 continue
-            sub_blocks.append(SemanticBlock(
-                block_type=block.block_type,
-                content=part,
-                token_count=token_count,
-                semantic_hash=_semantic_hash(part),
-                summary=_make_summary(part),
-                source_range=block.source_range,
-                metadata=dict(block.metadata) if block.metadata else {},
-            ))
+            sub_blocks.append(
+                SemanticBlock(
+                    block_type=block.block_type,
+                    content=part,
+                    token_count=token_count,
+                    semantic_hash=_semantic_hash(part),
+                    summary=_make_summary(part),
+                    source_range=block.source_range,
+                    metadata=dict(block.metadata) if block.metadata else {},
+                )
+            )
         return sub_blocks if sub_blocks else [block]
 
     def _make_block(

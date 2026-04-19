@@ -8,9 +8,9 @@ Captures and replays CUDA graphs for maximum inference throughput:
 
 Usage:
     from zse.core.zgraph import CUDAGraphRunner
-    
+
     runner = CUDAGraphRunner(model, max_batch_size=32)
-    
+
     # First call captures, subsequent calls replay
     logits = runner.decode_step(input_ids, position_ids)
 """
@@ -26,7 +26,7 @@ from .cuda_graph import (
 
 __all__ = [
     "CUDAGraphRunner",
-    "BatchedGraphRunner", 
+    "BatchedGraphRunner",
     "CapturedGraph",
     "GraphState",
     "capture_model_graph",

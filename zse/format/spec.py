@@ -32,6 +32,7 @@ MAX_TOKENIZER_SIZE = 100 * 1024 * 1024  # 100 MB max tokenizer
 
 class TensorDType(IntEnum):
     """Supported tensor data types."""
+
     FLOAT32 = 0
     FLOAT16 = 1
     BFLOAT16 = 2
@@ -45,33 +46,35 @@ class TensorDType(IntEnum):
 
 class QuantizationType(IntEnum):
     """Quantization methods."""
+
     NONE = 0
     ABSMAX = 1  # Simple absmax quantization
-    ZEROP = 2   # Zero-point quantization
-    GPTQ = 3    # GPTQ quantization
-    AWQ = 4     # AWQ quantization
-    HQQ = 5     # Half-Quadratic Quantization
+    ZEROP = 2  # Zero-point quantization
+    GPTQ = 3  # GPTQ quantization
+    AWQ = 4  # AWQ quantization
+    HQQ = 5  # Half-Quadratic Quantization
 
 
 @dataclass
 class TensorInfo:
     """Information about a stored tensor."""
+
     name: str
     shape: Tuple[int, ...]
     dtype: TensorDType
     offset: int  # Byte offset in file
-    size: int    # Size in bytes
-    
+    size: int  # Size in bytes
+
     # Quantization info (if applicable)
     quant_type: QuantizationType = QuantizationType.NONE
     quant_bits: int = 0
     group_size: int = 0
     scale_offset: int = 0  # Offset to scales tensor
     zeros_offset: int = 0  # Offset to zeros tensor
-    
+
     # Original shape before quantization (for dequantization)
     original_shape: Optional[Tuple[int, ...]] = None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary."""
         return {
@@ -87,7 +90,7 @@ class TensorInfo:
             "zeros_offset": self.zeros_offset,
             "original_shape": list(self.original_shape) if self.original_shape else None,
         }
-    
+
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "TensorInfo":
         """Deserialize from dictionary."""
@@ -110,11 +113,12 @@ class TensorInfo:
 @dataclass
 class LayerGroup:
     """Group of tensors belonging to a layer."""
+
     layer_idx: int
     tensor_names: List[str]
     offset: int  # Start offset for this layer's tensors
-    size: int    # Total size of this layer's tensors
-    
+    size: int  # Total size of this layer's tensors
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "layer_idx": self.layer_idx,
@@ -122,7 +126,7 @@ class LayerGroup:
             "offset": self.offset,
             "size": self.size,
         }
-    
+
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "LayerGroup":
         return cls(
@@ -138,13 +142,14 @@ class ZSEHeader:
     """
     Header containing all metadata for a .zse file.
     """
+
     # Version info
     version: Tuple[int, int, int, int] = ZSE_VERSION
-    
+
     # Model architecture
     architecture: str = ""  # e.g., "LlamaForCausalLM"
-    model_type: str = ""    # e.g., "llama"
-    
+    model_type: str = ""  # e.g., "llama"
+
     # Model config
     hidden_size: int = 0
     intermediate_size: int = 0
@@ -155,32 +160,32 @@ class ZSEHeader:
     max_position_embeddings: int = 0
     rope_theta: float = 10000.0
     rms_norm_eps: float = 1e-6
-    
+
     # Quantization info
     quantization: str = "none"  # "none", "int8", "int4"
-    quant_method: str = ""      # "gptq", "awq", "hqq", ""
-    
+    quant_method: str = ""  # "gptq", "awq", "hqq", ""
+
     # ZSE-specific
     zse_config: Dict[str, Any] = field(default_factory=dict)
-    
+
     # Tensor info
     tensors: List[TensorInfo] = field(default_factory=list)
-    
+
     # Layer groups (for streaming)
     layer_groups: List[LayerGroup] = field(default_factory=list)
-    
+
     # Offsets
     tokenizer_offset: int = 0
     tokenizer_size: int = 0
     tensor_data_offset: int = 0
-    
+
     # Original source
     source_model: str = ""
     source_revision: str = ""
-    
+
     # Full HuggingFace config (for offline loading)
     hf_config_json: str = ""
-    
+
     def to_json(self) -> str:
         """Serialize header to JSON."""
         data = {
@@ -208,8 +213,8 @@ class ZSEHeader:
             "source_revision": self.source_revision,
             "hf_config_json": self.hf_config_json,
         }
-        return json.dumps(data, separators=(',', ':'))
-    
+        return json.dumps(data, separators=(",", ":"))
+
     @classmethod
     def from_json(cls, json_str: str) -> "ZSEHeader":
         """Deserialize header from JSON."""
@@ -240,19 +245,19 @@ class ZSEHeader:
             hf_config_json=data.get("hf_config_json", ""),
         )
         return header
-    
+
     def get_tensor(self, name: str) -> Optional[TensorInfo]:
         """Get tensor info by name."""
         for t in self.tensors:
             if t.name == name:
                 return t
         return None
-    
+
     def get_layer_tensors(self, layer_idx: int) -> List[TensorInfo]:
         """Get all tensors for a specific layer."""
         prefix = f"model.layers.{layer_idx}."
         return [t for t in self.tensors if t.name.startswith(prefix)]
-    
+
     def get_layer_group(self, layer_idx: int) -> Optional[LayerGroup]:
         """Get layer group by index."""
         for g in self.layer_groups:
@@ -264,58 +269,58 @@ class ZSEHeader:
 def encode_header(header: ZSEHeader) -> bytes:
     """
     Encode header to bytes.
-    
+
     Format:
     - Magic (4 bytes): "ZSE\x00"
     - Version (4 bytes): major, minor, patch, reserved
     - Header length (4 bytes, uint32)
     - Header JSON (variable length)
     """
-    json_bytes = header.to_json().encode('utf-8')
-    
+    json_bytes = header.to_json().encode("utf-8")
+
     if len(json_bytes) > MAX_HEADER_SIZE:
         raise ValueError(f"Header too large: {len(json_bytes)} > {MAX_HEADER_SIZE}")
-    
+
     result = bytearray()
     result.extend(ZSE_MAGIC)
-    result.extend(struct.pack('<BBBB', *header.version))
-    result.extend(struct.pack('<I', len(json_bytes)))
+    result.extend(struct.pack("<BBBB", *header.version))
+    result.extend(struct.pack("<I", len(json_bytes)))
     result.extend(json_bytes)
-    
+
     return bytes(result)
 
 
 def decode_header(data: bytes) -> Tuple[ZSEHeader, int]:
     """
     Decode header from bytes.
-    
+
     Returns:
         (header, bytes_consumed)
     """
     if len(data) < 12:
         raise ValueError("Invalid .zse file: too short")
-    
+
     # Check magic
     if data[:4] != ZSE_MAGIC:
         raise ValueError("Invalid .zse file: bad magic bytes")
-    
+
     # Read version
-    version = struct.unpack('<BBBB', data[4:8])
-    
+    version = struct.unpack("<BBBB", data[4:8])
+
     # Read header length
-    header_len = struct.unpack('<I', data[8:12])[0]
-    
+    header_len = struct.unpack("<I", data[8:12])[0]
+
     if header_len > MAX_HEADER_SIZE:
         raise ValueError(f"Header too large: {header_len}")
-    
+
     if len(data) < 12 + header_len:
         raise ValueError("Invalid .zse file: truncated header")
-    
+
     # Read header JSON
-    json_str = data[12:12 + header_len].decode('utf-8')
+    json_str = data[12 : 12 + header_len].decode("utf-8")
     header = ZSEHeader.from_json(json_str)
     header.version = version
-    
+
     return header, 12 + header_len
 
 
@@ -338,7 +343,7 @@ def calculate_tensor_size(shape: Tuple[int, ...], dtype: TensorDType) -> int:
     num_elements = 1
     for dim in shape:
         num_elements *= dim
-    
+
     byte_size = num_elements * DTYPE_SIZES[dtype]
     return int(byte_size)
 
@@ -346,7 +351,7 @@ def calculate_tensor_size(shape: Tuple[int, ...], dtype: TensorDType) -> int:
 def torch_dtype_to_zse(torch_dtype) -> TensorDType:
     """Convert PyTorch dtype to ZSE dtype."""
     import torch
-    
+
     mapping = {
         torch.float32: TensorDType.FLOAT32,
         torch.float16: TensorDType.FLOAT16,
@@ -354,14 +359,14 @@ def torch_dtype_to_zse(torch_dtype) -> TensorDType:
         torch.int8: TensorDType.INT8,
         torch.uint8: TensorDType.UINT8,
     }
-    
+
     return mapping.get(torch_dtype, TensorDType.FLOAT16)
 
 
 def zse_dtype_to_torch(zse_dtype: TensorDType):
     """Convert ZSE dtype to PyTorch dtype."""
     import torch
-    
+
     mapping = {
         TensorDType.FLOAT32: torch.float32,
         TensorDType.FLOAT16: torch.float16,
@@ -373,5 +378,5 @@ def zse_dtype_to_torch(zse_dtype: TensorDType):
         TensorDType.FP8_E4M3: torch.float16,  # Fallback
         TensorDType.FP8_E5M2: torch.float16,  # Fallback
     }
-    
+
     return mapping.get(zse_dtype, torch.float16)

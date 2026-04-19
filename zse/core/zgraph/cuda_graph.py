@@ -34,8 +34,9 @@ import torch.nn as nn
 
 class GraphState(Enum):
     """State of a CUDA graph."""
+
     UNINITIALIZED = "uninitialized"
-    CAPTURING = "capturing"  
+    CAPTURING = "capturing"
     CAPTURED = "captured"
     INVALID = "invalid"
 
@@ -45,22 +46,23 @@ class CapturedGraph:
     """
     A captured CUDA graph ready for replay.
     """
+
     # The CUDA graph object
     graph: Optional[torch.cuda.CUDAGraph] = None
-    
+
     # Static input buffers (must remain at same address)
     input_buffers: Dict[str, torch.Tensor] = field(default_factory=dict)
-    
+
     # Static output buffers
     output_buffers: Dict[str, torch.Tensor] = field(default_factory=dict)
-    
+
     # Graph state
     state: GraphState = GraphState.UNINITIALIZED
-    
+
     # Configuration used for capture
     batch_size: int = 0
     max_seq_len: int = 0
-    
+
     # Stats
     num_replays: int = 0
     capture_time_ms: float = 0.0
@@ -69,20 +71,20 @@ class CapturedGraph:
 class CUDAGraphRunner:
     """
     CUDA Graph runner for decode phase optimization.
-    
+
     Captures the decode forward pass as a CUDA graph and replays it
     for each decode step, eliminating kernel launch overhead.
-    
+
     Usage:
         runner = CUDAGraphRunner(model, max_batch_size=32)
-        
+
         # First call captures the graph
         output = runner.decode_step(input_ids, position_ids, kv_cache)
-        
+
         # Subsequent calls replay the graph
         output = runner.decode_step(input_ids, position_ids, kv_cache)
     """
-    
+
     def __init__(
         self,
         model: nn.Module,
@@ -94,7 +96,7 @@ class CUDAGraphRunner:
     ):
         """
         Initialize CUDA Graph runner.
-        
+
         Args:
             model: The model to capture
             max_batch_size: Maximum batch size for graphs
@@ -109,16 +111,16 @@ class CUDAGraphRunner:
         self.device = device
         self.num_graph_pools = num_graph_pools
         self.enable_capture = enable_capture and torch.cuda.is_available()
-        
+
         # Graph pool: (batch_size, seq_len_bucket) -> CapturedGraph
         self.graph_pool: Dict[Tuple[int, int], CapturedGraph] = {}
-        
+
         # Lock for thread safety
         self._lock = threading.Lock()
-        
+
         # Memory pool for static buffers
         self._memory_pool: Optional[torch.cuda.graphs.graph_pool_handle] = None
-        
+
         # Stats
         self.stats = {
             "captures": 0,
@@ -126,10 +128,10 @@ class CUDAGraphRunner:
             "capture_time_ms": 0.0,
             "replay_time_ms": 0.0,
         }
-        
+
         if self.enable_capture:
             self._init_memory_pool()
-    
+
     def _init_memory_pool(self) -> None:
         """Initialize CUDA graph memory pool."""
         try:
@@ -138,7 +140,7 @@ class CUDAGraphRunner:
         except Exception as e:
             warnings.warn(f"Failed to init CUDA graph memory pool: {e}")
             self._memory_pool = None
-    
+
     def _get_seq_bucket(self, seq_len: int) -> int:
         """Get sequence length bucket for graph pool."""
         # Bucket by powers of 2 up to max
@@ -147,11 +149,11 @@ class CUDAGraphRunner:
             if seq_len <= bucket:
                 return bucket
         return self.max_context_len
-    
+
     def _get_graph_key(self, batch_size: int, seq_len: int) -> Tuple[int, int]:
         """Get key for graph pool lookup."""
         return (batch_size, self._get_seq_bucket(seq_len))
-    
+
     def _create_static_buffers(
         self,
         batch_size: int,
@@ -162,19 +164,11 @@ class CUDAGraphRunner:
     ) -> Dict[str, torch.Tensor]:
         """Create static input/output buffers for graph capture."""
         device = f"cuda:{self.device}"
-        
+
         buffers = {
             # Input: single token per sequence for decode
-            "input_ids": torch.zeros(
-                (batch_size, 1), 
-                dtype=torch.long, 
-                device=device
-            ),
-            "position_ids": torch.zeros(
-                (batch_size, 1), 
-                dtype=torch.long, 
-                device=device
-            ),
+            "input_ids": torch.zeros((batch_size, 1), dtype=torch.long, device=device),
+            "position_ids": torch.zeros((batch_size, 1), dtype=torch.long, device=device),
             # Output logits
             "logits": torch.zeros(
                 (batch_size, 1, vocab_size),
@@ -182,9 +176,9 @@ class CUDAGraphRunner:
                 device=device,
             ),
         }
-        
+
         return buffers
-    
+
     def _warmup(
         self,
         input_ids: torch.Tensor,
@@ -193,12 +187,12 @@ class CUDAGraphRunner:
     ) -> torch.Tensor:
         """
         Warmup run before capture to allocate memory.
-        
+
         This ensures all memory allocations happen before capture.
         """
         with torch.no_grad():
             # Run model normally
-            if hasattr(self.model, 'forward_decode'):
+            if hasattr(self.model, "forward_decode"):
                 output = self.model.forward_decode(
                     input_ids=input_ids,
                     position_ids=position_ids,
@@ -211,13 +205,13 @@ class CUDAGraphRunner:
                     use_cache=True,
                     **kwargs,
                 )
-                if hasattr(output, 'logits'):
+                if hasattr(output, "logits"):
                     output = output.logits
-        
+
         # Sync to ensure all ops complete
         torch.cuda.synchronize(self.device)
         return output
-    
+
     def _capture_graph(
         self,
         batch_size: int,
@@ -228,58 +222,59 @@ class CUDAGraphRunner:
     ) -> CapturedGraph:
         """
         Capture CUDA graph for decode step.
-        
+
         Args:
             batch_size: Batch size for this graph
             seq_len: Current sequence length
             input_ids: Input token IDs
             position_ids: Position IDs
             **kwargs: Additional model arguments (kv_cache, etc.)
-            
+
         Returns:
             Captured graph ready for replay
         """
         import time
+
         start = time.perf_counter()
-        
+
         # Create captured graph container
         captured = CapturedGraph(
             batch_size=batch_size,
             max_seq_len=seq_len,
             state=GraphState.CAPTURING,
         )
-        
+
         # Get model config for buffer creation
-        hidden_size = getattr(self.model.config, 'hidden_size', 4096)
-        vocab_size = getattr(self.model.config, 'vocab_size', 32000)
+        hidden_size = getattr(self.model.config, "hidden_size", 4096)
+        vocab_size = getattr(self.model.config, "vocab_size", 32000)
         dtype = next(self.model.parameters()).dtype
-        
+
         # Create static buffers
         captured.input_buffers = self._create_static_buffers(
             batch_size, seq_len, hidden_size, vocab_size, dtype
         )
-        
+
         # Copy input data to static buffers
         captured.input_buffers["input_ids"].copy_(input_ids)
         captured.input_buffers["position_ids"].copy_(position_ids)
-        
+
         # Warmup run
         _ = self._warmup(
             captured.input_buffers["input_ids"],
             captured.input_buffers["position_ids"],
             **kwargs,
         )
-        
+
         # Clear CUDA cache
         torch.cuda.synchronize(self.device)
-        
+
         # Create graph
         graph = torch.cuda.CUDAGraph()
-        
+
         # Capture
         with torch.cuda.graph(graph, pool=self._memory_pool):
             with torch.no_grad():
-                if hasattr(self.model, 'forward_decode'):
+                if hasattr(self.model, "forward_decode"):
                     output = self.model.forward_decode(
                         input_ids=captured.input_buffers["input_ids"],
                         position_ids=captured.input_buffers["position_ids"],
@@ -292,20 +287,20 @@ class CUDAGraphRunner:
                         use_cache=True,
                         **kwargs,
                     )
-                    if hasattr(output, 'logits'):
+                    if hasattr(output, "logits"):
                         output = output.logits
-                
+
                 captured.output_buffers["logits"] = output
-        
+
         captured.graph = graph
         captured.state = GraphState.CAPTURED
         captured.capture_time_ms = (time.perf_counter() - start) * 1000
-        
+
         self.stats["captures"] += 1
         self.stats["capture_time_ms"] += captured.capture_time_ms
-        
+
         return captured
-    
+
     def decode_step(
         self,
         input_ids: torch.Tensor,
@@ -315,75 +310,78 @@ class CUDAGraphRunner:
     ) -> torch.Tensor:
         """
         Execute a single decode step, using CUDA graph if available.
-        
+
         Args:
             input_ids: Input token IDs [batch, 1]
             position_ids: Position IDs [batch, 1]
             use_graph: Whether to use CUDA graph
             **kwargs: Additional model arguments
-            
+
         Returns:
             Logits tensor [batch, 1, vocab_size]
         """
         if not self.enable_capture or not use_graph:
             # Fall back to normal execution
             return self._warmup(input_ids, position_ids, **kwargs)
-        
+
         batch_size = input_ids.shape[0]
         seq_len = position_ids.max().item() + 1 if position_ids.numel() > 0 else 1
-        
+
         # Get or create graph
         graph_key = self._get_graph_key(batch_size, seq_len)
-        
+
         with self._lock:
             if graph_key not in self.graph_pool:
                 # Capture new graph
                 captured = self._capture_graph(
-                    batch_size, seq_len,
-                    input_ids, position_ids,
+                    batch_size,
+                    seq_len,
+                    input_ids,
+                    position_ids,
                     **kwargs,
                 )
                 self.graph_pool[graph_key] = captured
-            
+
             captured = self.graph_pool[graph_key]
-        
+
         if captured.state != GraphState.CAPTURED:
             # Graph capture failed, fall back
             return self._warmup(input_ids, position_ids, **kwargs)
-        
+
         # Update static input buffers
         captured.input_buffers["input_ids"].copy_(input_ids)
         captured.input_buffers["position_ids"].copy_(position_ids)
-        
+
         # Replay graph
         import time
+
         start = time.perf_counter()
         captured.graph.replay()
         replay_time = (time.perf_counter() - start) * 1000
-        
+
         captured.num_replays += 1
         self.stats["replays"] += 1
         self.stats["replay_time_ms"] += replay_time
-        
+
         # Return output from static buffer (clone to be safe)
         return captured.output_buffers["logits"].clone()
-    
+
     def clear_graphs(self) -> None:
         """Clear all captured graphs."""
         with self._lock:
             self.graph_pool.clear()
-    
+
     def get_stats(self) -> Dict[str, Any]:
         """Get graph execution statistics."""
         avg_capture = (
             self.stats["capture_time_ms"] / self.stats["captures"]
-            if self.stats["captures"] > 0 else 0
+            if self.stats["captures"] > 0
+            else 0
         )
         avg_replay = (
-            self.stats["replay_time_ms"] / self.stats["replays"]
-            if self.stats["replays"] > 0 else 0
+            self.stats["replay_time_ms"] / self.stats["replays"] if self.stats["replays"] > 0 else 0
         )
-        
+
         return {
             **self.stats,
             "num_graphs": len(self.graph_pool),
@@ -396,11 +394,11 @@ class CUDAGraphRunner:
 class BatchedGraphRunner:
     """
     Graph runner optimized for varying batch sizes.
-    
+
     Pre-captures graphs for common batch sizes to avoid
     capture overhead at runtime.
     """
-    
+
     def __init__(
         self,
         model: nn.Module,
@@ -409,7 +407,7 @@ class BatchedGraphRunner:
     ):
         """
         Initialize batched graph runner.
-        
+
         Args:
             model: Model to capture
             batch_sizes: Batch sizes to pre-capture
@@ -418,17 +416,17 @@ class BatchedGraphRunner:
         self.model = model
         self.batch_sizes = sorted(batch_sizes)
         self.device = device
-        
+
         # Runners for each batch size
         self.runners: Dict[int, CUDAGraphRunner] = {}
-        
+
         for bs in batch_sizes:
             self.runners[bs] = CUDAGraphRunner(
                 model=model,
                 max_batch_size=bs,
                 device=device,
             )
-    
+
     def _find_runner(self, batch_size: int) -> CUDAGraphRunner:
         """Find appropriate runner for batch size."""
         # Find smallest batch size >= requested
@@ -437,7 +435,7 @@ class BatchedGraphRunner:
                 return self.runners[bs]
         # Fall back to largest
         return self.runners[self.batch_sizes[-1]]
-    
+
     def decode_step(
         self,
         input_ids: torch.Tensor,
@@ -447,32 +445,41 @@ class BatchedGraphRunner:
         """Execute decode step with appropriate graph."""
         batch_size = input_ids.shape[0]
         runner = self._find_runner(batch_size)
-        
+
         # Pad if needed
         target_bs = runner.max_batch_size
         if batch_size < target_bs:
             pad_size = target_bs - batch_size
-            input_ids = torch.cat([
-                input_ids,
-                torch.zeros((pad_size, 1), dtype=input_ids.dtype, device=input_ids.device),
-            ], dim=0)
-            position_ids = torch.cat([
-                position_ids,
-                torch.zeros((pad_size, 1), dtype=position_ids.dtype, device=position_ids.device),
-            ], dim=0)
-        
+            input_ids = torch.cat(
+                [
+                    input_ids,
+                    torch.zeros((pad_size, 1), dtype=input_ids.dtype, device=input_ids.device),
+                ],
+                dim=0,
+            )
+            position_ids = torch.cat(
+                [
+                    position_ids,
+                    torch.zeros(
+                        (pad_size, 1), dtype=position_ids.dtype, device=position_ids.device
+                    ),
+                ],
+                dim=0,
+            )
+
         output = runner.decode_step(input_ids, position_ids, **kwargs)
-        
+
         # Remove padding
         if batch_size < target_bs:
             output = output[:batch_size]
-        
+
         return output
 
 
 # =============================================================================
 # GRAPH CAPTURE UTILITIES
 # =============================================================================
+
 
 def capture_model_graph(
     model: nn.Module,
@@ -481,41 +488,39 @@ def capture_model_graph(
 ) -> Tuple[torch.cuda.CUDAGraph, Dict[str, torch.Tensor]]:
     """
     Utility to capture a model forward pass as CUDA graph.
-    
+
     Args:
         model: Model to capture
         example_inputs: Example input tensors
         warmup_iters: Number of warmup iterations
-        
+
     Returns:
         (graph, output_buffers) tuple
     """
     # Create static input buffers
-    static_inputs = {
-        k: v.clone() for k, v in example_inputs.items()
-    }
-    
+    static_inputs = {k: v.clone() for k, v in example_inputs.items()}
+
     # Warmup
     for _ in range(warmup_iters):
         with torch.no_grad():
             _ = model(**static_inputs)
-    
+
     torch.cuda.synchronize()
-    
+
     # Capture
     graph = torch.cuda.CUDAGraph()
-    
+
     with torch.cuda.graph(graph):
         with torch.no_grad():
             output = model(**static_inputs)
-    
+
     return graph, {"output": output}
 
 
 def is_cuda_graph_compatible(model: nn.Module) -> bool:
     """
     Check if a model is compatible with CUDA graph capture.
-    
+
     Requirements:
     - All parameters on same CUDA device
     - No dynamic control flow
@@ -523,13 +528,13 @@ def is_cuda_graph_compatible(model: nn.Module) -> bool:
     """
     if not torch.cuda.is_available():
         return False
-    
+
     # Check all params on CUDA
     devices = set()
     for param in model.parameters():
-        if param.device.type != 'cuda':
+        if param.device.type != "cuda":
             return False
         devices.add(param.device)
-    
+
     # All on same device
     return len(devices) <= 1

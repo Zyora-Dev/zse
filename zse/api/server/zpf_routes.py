@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 # Request/Response Models
 # =============================================================================
 
+
 class ZPFDocumentResponse(BaseModel):
     doc_id: str
     block_count: int
@@ -104,12 +105,14 @@ zpf_router = APIRouter(prefix="/api/zpf", tags=["ZPF RAG"])
 def _get_pipeline():
     """Lazy import to avoid startup cost."""
     from zse.core.zrag.pipeline import get_rag_pipeline
+
     return get_rag_pipeline()
 
 
 # =============================================================================
 # Ingest
 # =============================================================================
+
 
 @zpf_router.post("/ingest", response_model=ZPFDocumentResponse)
 async def zpf_ingest(
@@ -130,6 +133,7 @@ async def zpf_ingest(
     if metadata:
         try:
             import json as _json
+
             meta = _json.loads(metadata)
         except Exception:
             pass
@@ -159,6 +163,7 @@ async def zpf_ingest(
 # =============================================================================
 # Search
 # =============================================================================
+
 
 @zpf_router.post("/search", response_model=ZPFSearchResponse)
 async def zpf_search(request: ZPFSearchRequest):
@@ -195,6 +200,7 @@ async def zpf_search(request: ZPFSearchRequest):
 # Context
 # =============================================================================
 
+
 @zpf_router.post("/context", response_model=ZPFContextResponse)
 async def zpf_context(request: ZPFContextRequest):
     """Get LLM-ready context from .zpf semantic blocks."""
@@ -219,6 +225,7 @@ async def zpf_context(request: ZPFContextRequest):
 # =============================================================================
 # Documents
 # =============================================================================
+
 
 @zpf_router.get("/documents", response_model=ZPFDocumentListResponse)
 async def zpf_list_documents():
@@ -248,6 +255,7 @@ async def zpf_delete_document(doc_id: str):
 # Stats
 # =============================================================================
 
+
 @zpf_router.get("/stats", response_model=ZPFStatsResponse)
 async def zpf_stats():
     """Get .zpf RAG pipeline statistics."""
@@ -258,6 +266,7 @@ async def zpf_stats():
 # =============================================================================
 # Convert (download .zpf)
 # =============================================================================
+
 
 @zpf_router.post("/convert")
 async def zpf_convert(

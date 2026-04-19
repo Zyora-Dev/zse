@@ -12,6 +12,7 @@ from enum import Enum
 
 class ModelCategory(str, Enum):
     """Model categories/capabilities."""
+
     CHAT = "chat"
     INSTRUCT = "instruct"
     CODE = "code"
@@ -22,47 +23,49 @@ class ModelCategory(str, Enum):
 
 class ModelSize(str, Enum):
     """Model size tiers for VRAM estimation."""
-    TINY = "tiny"       # < 1B params, < 2GB VRAM
-    SMALL = "small"     # 1-3B params, 2-6GB VRAM
-    MEDIUM = "medium"   # 3-8B params, 6-16GB VRAM
-    LARGE = "large"     # 8-13B params, 16-26GB VRAM
-    XLARGE = "xlarge"   # 13-34B params, 26-70GB VRAM
-    XXL = "xxl"         # 34B+ params, 70GB+ VRAM
+
+    TINY = "tiny"  # < 1B params, < 2GB VRAM
+    SMALL = "small"  # 1-3B params, 2-6GB VRAM
+    MEDIUM = "medium"  # 3-8B params, 6-16GB VRAM
+    LARGE = "large"  # 8-13B params, 16-26GB VRAM
+    XLARGE = "xlarge"  # 13-34B params, 26-70GB VRAM
+    XXL = "xxl"  # 34B+ params, 70GB+ VRAM
 
 
 @dataclass
 class ModelSpec:
     """Specification for a registered model."""
+
     # Identity
-    model_id: str                    # HuggingFace model ID
-    name: str                        # Display name
-    description: str                 # Short description
-    
+    model_id: str  # HuggingFace model ID
+    name: str  # Display name
+    description: str  # Short description
+
     # Metadata
-    parameters: str                  # e.g., "7B", "1.1B", "70B"
-    architecture: str                # e.g., "LlamaForCausalLM"
+    parameters: str  # e.g., "7B", "1.1B", "70B"
+    architecture: str  # e.g., "LlamaForCausalLM"
     categories: List[ModelCategory]  # What the model is good for
-    size: ModelSize                  # Size tier
-    
+    size: ModelSize  # Size tier
+
     # Requirements
-    vram_fp16_gb: float             # VRAM needed for FP16
-    vram_int8_gb: float             # VRAM needed for INT8
-    vram_int4_gb: float             # VRAM needed for INT4
-    
+    vram_fp16_gb: float  # VRAM needed for FP16
+    vram_int8_gb: float  # VRAM needed for INT8
+    vram_int4_gb: float  # VRAM needed for INT4
+
     # Recommendations
     recommended_quant: str = "int8"  # Recommended quantization
-    context_length: int = 4096       # Max context length
-    
+    context_length: int = 4096  # Max context length
+
     # Status
-    tested: bool = True              # Tested with ZSE
-    zse_optimized: bool = False      # Has .zse optimizations
-    
+    tested: bool = True  # Tested with ZSE
+    zse_optimized: bool = False  # Has .zse optimizations
+
     # Additional info
     license: str = "unknown"
-    provider: str = "community"      # meta, mistral, qwen, google, etc.
+    provider: str = "community"  # meta, mistral, qwen, google, etc.
     homepage: Optional[str] = None
     tags: List[str] = field(default_factory=list)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         return {
@@ -114,7 +117,6 @@ REGISTRY: List[ModelSpec] = [
         provider="TinyLlama",
         tags=["fast", "edge", "testing"],
     ),
-    
     # =========================================================================
     # SMALL MODELS (1-3B, 2-6GB VRAM) - Good balance of quality and speed
     # =========================================================================
@@ -203,7 +205,6 @@ REGISTRY: List[ModelSpec] = [
         provider="Google",
         tags=["efficient"],
     ),
-    
     # =========================================================================
     # MEDIUM MODELS (3-8B, 6-16GB VRAM) - Production quality
     # =========================================================================
@@ -277,7 +278,6 @@ REGISTRY: List[ModelSpec] = [
         provider="Google",
         tags=["reasoning"],
     ),
-    
     # =========================================================================
     # CODE MODELS - Specialized for programming
     # =========================================================================
@@ -333,7 +333,6 @@ REGISTRY: List[ModelSpec] = [
         provider="DeepSeek",
         tags=["code", "fill-in-middle"],
     ),
-    
     # =========================================================================
     # LARGE MODELS (8-13B, 16-26GB VRAM) - High quality
     # =========================================================================
@@ -360,7 +359,12 @@ REGISTRY: List[ModelSpec] = [
         description="High-capability model balancing quality and efficiency",
         parameters="14B",
         architecture="Qwen2ForCausalLM",
-        categories=[ModelCategory.INSTRUCT, ModelCategory.CHAT, ModelCategory.CODE, ModelCategory.REASONING],
+        categories=[
+            ModelCategory.INSTRUCT,
+            ModelCategory.CHAT,
+            ModelCategory.CODE,
+            ModelCategory.REASONING,
+        ],
         size=ModelSize.LARGE,
         vram_fp16_gb=28.0,
         vram_int8_gb=16.0,
@@ -372,7 +376,6 @@ REGISTRY: List[ModelSpec] = [
         provider="Qwen",
         tags=["multilingual", "production"],
     ),
-    
     # =========================================================================
     # XLARGE MODELS (13-34B, 26-70GB VRAM) - Maximum quality
     # =========================================================================
@@ -382,7 +385,12 @@ REGISTRY: List[ModelSpec] = [
         description="Near-frontier quality with strong reasoning",
         parameters="32B",
         architecture="Qwen2ForCausalLM",
-        categories=[ModelCategory.INSTRUCT, ModelCategory.CHAT, ModelCategory.CODE, ModelCategory.REASONING],
+        categories=[
+            ModelCategory.INSTRUCT,
+            ModelCategory.CHAT,
+            ModelCategory.CODE,
+            ModelCategory.REASONING,
+        ],
         size=ModelSize.XLARGE,
         vram_fp16_gb=64.0,
         vram_int8_gb=36.0,
@@ -417,7 +425,12 @@ REGISTRY: List[ModelSpec] = [
         description="Meta's flagship large model with exceptional quality",
         parameters="70B",
         architecture="LlamaForCausalLM",
-        categories=[ModelCategory.INSTRUCT, ModelCategory.CHAT, ModelCategory.CODE, ModelCategory.REASONING],
+        categories=[
+            ModelCategory.INSTRUCT,
+            ModelCategory.CHAT,
+            ModelCategory.CODE,
+            ModelCategory.REASONING,
+        ],
         size=ModelSize.XXL,
         vram_fp16_gb=140.0,
         vram_int8_gb=78.0,
@@ -434,7 +447,12 @@ REGISTRY: List[ModelSpec] = [
         description="Frontier-class model with exceptional multilingual ability",
         parameters="72B",
         architecture="Qwen2ForCausalLM",
-        categories=[ModelCategory.INSTRUCT, ModelCategory.CHAT, ModelCategory.CODE, ModelCategory.REASONING],
+        categories=[
+            ModelCategory.INSTRUCT,
+            ModelCategory.CHAT,
+            ModelCategory.CODE,
+            ModelCategory.REASONING,
+        ],
         size=ModelSize.XXL,
         vram_fp16_gb=144.0,
         vram_int8_gb=80.0,
@@ -450,38 +468,40 @@ REGISTRY: List[ModelSpec] = [
 
 class ModelRegistry:
     """Model registry for discovering and selecting models."""
-    
+
     def __init__(self):
         self._models: Dict[str, ModelSpec] = {m.model_id: m for m in REGISTRY}
-    
+
     def list_all(self) -> List[ModelSpec]:
         """List all registered models."""
         return list(self._models.values())
-    
+
     def get(self, model_id: str) -> Optional[ModelSpec]:
         """Get a specific model by ID."""
         return self._models.get(model_id)
-    
+
     def search(self, query: str) -> List[ModelSpec]:
         """Search models by name, description, or tags."""
         query = query.lower()
         results = []
         for model in self._models.values():
-            if (query in model.model_id.lower() or
-                query in model.name.lower() or
-                query in model.description.lower() or
-                any(query in tag for tag in model.tags)):
+            if (
+                query in model.model_id.lower()
+                or query in model.name.lower()
+                or query in model.description.lower()
+                or any(query in tag for tag in model.tags)
+            ):
                 results.append(model)
         return results
-    
+
     def filter_by_category(self, category: ModelCategory) -> List[ModelSpec]:
         """Filter models by category."""
         return [m for m in self._models.values() if category in m.categories]
-    
+
     def filter_by_size(self, size: ModelSize) -> List[ModelSpec]:
         """Filter models by size tier."""
         return [m for m in self._models.values() if m.size == size]
-    
+
     def filter_by_vram(self, max_vram_gb: float, quantization: str = "int8") -> List[ModelSpec]:
         """Filter models that fit in given VRAM."""
         results = []
@@ -493,14 +513,14 @@ class ModelRegistry:
             elif quantization == "int4" and model.vram_int4_gb <= max_vram_gb:
                 results.append(model)
         return results
-    
+
     def get_recommended(self, max_vram_gb: Optional[float] = None) -> List[ModelSpec]:
         """Get recommended models, optionally filtered by VRAM."""
         recommended = [m for m in self._models.values() if "recommended" in m.tags]
         if max_vram_gb:
             recommended = [m for m in recommended if m.vram_int8_gb <= max_vram_gb]
         return recommended
-    
+
     def estimate_vram(self, model_id: str, quantization: str = "int8") -> Optional[float]:
         """Estimate VRAM for a model."""
         model = self.get(model_id)

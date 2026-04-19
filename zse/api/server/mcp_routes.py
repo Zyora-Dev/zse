@@ -24,8 +24,10 @@ from zse.api.server.mcp import (
 # Request/Response Models
 # =============================================================================
 
+
 class ToolParameterSchema(BaseModel):
     """Tool parameter schema."""
+
     name: str
     type: str
     description: str
@@ -36,6 +38,7 @@ class ToolParameterSchema(BaseModel):
 
 class ToolSchema(BaseModel):
     """Tool schema for API responses."""
+
     name: str
     description: str
     parameters: List[ToolParameterSchema]
@@ -43,18 +46,21 @@ class ToolSchema(BaseModel):
 
 class ToolListResponse(BaseModel):
     """List of tools."""
+
     tools: List[ToolSchema]
     openai_format: List[Dict[str, Any]]
 
 
 class ExecuteToolRequest(BaseModel):
     """Request to execute a tool."""
+
     name: str
     arguments: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ToolResultResponse(BaseModel):
     """Tool execution result."""
+
     tool_call_id: str
     name: str
     result: Optional[Any]
@@ -63,6 +69,7 @@ class ToolResultResponse(BaseModel):
 
 class RegisterToolRequest(BaseModel):
     """Request to register a custom tool (no handler - for schema only)."""
+
     name: str
     description: str
     parameters: List[ToolParameterSchema]
@@ -70,11 +77,13 @@ class RegisterToolRequest(BaseModel):
 
 class ParseToolCallsRequest(BaseModel):
     """Request to parse tool calls from text."""
+
     content: str
 
 
 class ToolCallSchema(BaseModel):
     """Tool call schema."""
+
     id: str
     name: str
     arguments: Dict[str, Any]
@@ -82,17 +91,20 @@ class ToolCallSchema(BaseModel):
 
 class ParseToolCallsResponse(BaseModel):
     """Parsed tool calls."""
+
     tool_calls: List[ToolCallSchema]
 
 
 class ProcessToolCallsRequest(BaseModel):
     """Request to parse and execute tool calls."""
+
     content: str
     auto_execute: bool = True
 
 
 class ProcessToolCallsResponse(BaseModel):
     """Processed tool calls with results."""
+
     tool_calls: List[ToolCallSchema]
     results: List[ToolResultResponse]
 
@@ -108,12 +120,13 @@ router = APIRouter(prefix="/api/tools", tags=["Tools"])
 # Tool Endpoints
 # =============================================================================
 
+
 @router.get("/", response_model=ToolListResponse)
 async def list_tools():
     """List all registered tools."""
     registry = get_tool_registry()
     tools = registry.list_tools()
-    
+
     return ToolListResponse(
         tools=[
             ToolSchema(
@@ -142,10 +155,10 @@ async def get_tool(name: str):
     """Get a specific tool by name."""
     registry = get_tool_registry()
     tool = registry.get(name)
-    
+
     if not tool:
         raise HTTPException(status_code=404, detail=f"Tool '{name}' not found")
-    
+
     return ToolSchema(
         name=tool.name,
         description=tool.description,
@@ -167,13 +180,13 @@ async def get_tool(name: str):
 async def execute_tool(request: ExecuteToolRequest):
     """Execute a tool with given arguments."""
     registry = get_tool_registry()
-    
+
     tool = registry.get(request.name)
     if not tool:
         raise HTTPException(status_code=404, detail=f"Tool '{request.name}' not found")
-    
+
     result = registry.execute(request.name, request.arguments)
-    
+
     return ToolResultResponse(
         tool_call_id=result.tool_call_id,
         name=result.name,
@@ -186,9 +199,9 @@ async def execute_tool(request: ExecuteToolRequest):
 async def parse_tool_calls(request: ParseToolCallsRequest):
     """Parse tool calls from model output text."""
     registry = get_tool_registry()
-    
+
     tool_calls = registry.parse_tool_calls(request.content)
-    
+
     return ParseToolCallsResponse(
         tool_calls=[
             ToolCallSchema(
@@ -205,12 +218,12 @@ async def parse_tool_calls(request: ParseToolCallsRequest):
 async def process_tool_calls(request: ProcessToolCallsRequest):
     """Parse and optionally execute tool calls from model output."""
     registry = get_tool_registry()
-    
+
     tool_calls, results = registry.process_tool_calls(
         request.content,
         auto_execute=request.auto_execute,
     )
-    
+
     return ProcessToolCallsResponse(
         tool_calls=[
             ToolCallSchema(
@@ -235,23 +248,20 @@ async def process_tool_calls(request: ProcessToolCallsRequest):
 @router.post("/register")
 async def register_custom_tool(request: RegisterToolRequest):
     """Register a custom tool schema (for external execution).
-    
+
     Note: Custom tools registered this way don't have handlers and
     cannot be executed via /execute. They are for schema purposes only.
     """
     registry = get_tool_registry()
-    
+
     # Check if tool already exists
     existing = registry.get(request.name)
     if existing:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Tool '{request.name}' already exists"
-        )
-    
+        raise HTTPException(status_code=409, detail=f"Tool '{request.name}' already exists")
+
     # Create tool without handler
     from zse.api.server.mcp import Tool, ToolParameter
-    
+
     tool = Tool(
         name=request.name,
         description=request.description,
@@ -268,9 +278,9 @@ async def register_custom_tool(request: RegisterToolRequest):
         ],
         handler=None,
     )
-    
+
     registry.register(tool)
-    
+
     return {
         "status": "registered",
         "name": request.name,
@@ -282,10 +292,10 @@ async def register_custom_tool(request: RegisterToolRequest):
 async def unregister_tool(name: str):
     """Unregister a tool."""
     registry = get_tool_registry()
-    
+
     if not registry.unregister(name):
         raise HTTPException(status_code=404, detail=f"Tool '{name}' not found")
-    
+
     return {"status": "unregistered", "name": name}
 
 
@@ -293,10 +303,11 @@ async def unregister_tool(name: str):
 # OpenAI-Compatible Tools Format
 # =============================================================================
 
+
 @router.get("/openai/functions")
 async def get_openai_functions():
     """Get tools in OpenAI function calling format.
-    
+
     Use this to pass to chat completions with function calling enabled.
     """
     registry = get_tool_registry()

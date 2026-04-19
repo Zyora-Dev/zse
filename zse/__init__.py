@@ -23,12 +23,12 @@ Usage:
     $ zse serve meta-llama/Llama-3-8B
     $ zse chat meta-llama/Llama-3-8B
     $ zse convert model.safetensors --output model.zse
-    
+
     # Python
     from zse import Engine
     engine = Engine("meta-llama/Llama-3-8B", max_memory="8GB")
     response = engine.generate("Hello, world!")
-    
+
     # Privacy (NEW)
     from zse.zcrypt import ZCrypt, PrivacyLevel
     privacy = ZCrypt(level=PrivacyLevel.ENHANCED)
@@ -44,6 +44,7 @@ __all__ = [
 # Optional: Export privacy module
 try:
     from zse.zcrypt import ZCrypt, PrivacyLevel, PrivacyConfig
+
     __all__.extend(["ZCrypt", "PrivacyLevel", "PrivacyConfig"])
 except ImportError:
     pass  # Privacy module not fully installed
