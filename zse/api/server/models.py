@@ -29,6 +29,7 @@ class ChatCompletionRequest(BaseModel):
     """OpenAI-compatible chat completion request."""
 
     model_config = ConfigDict(extra="ignore")
+    content: Optional[str] = None
 
     model: str
     messages: List[ChatMessage]
