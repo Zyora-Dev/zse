@@ -26,6 +26,7 @@ import numpy as np
 
 # ── BM25 helpers ──────────────────────────────────────────────────────────────
 
+
 def _tokenize(text: str) -> List[str]:
     """Simple whitespace+punctuation tokenizer for BM25."""
     return re.findall(r"[a-z0-9_./-]+", text.lower())
@@ -38,9 +39,7 @@ _LIST_PATTERN = re.compile(
     re.I,
 )
 
-_IDENTIFIER_PATTERN = re.compile(
-    r"[a-zA-Z][a-zA-Z0-9]*[-_][a-zA-Z0-9]+([-_][a-zA-Z0-9]+)*"
-)
+_IDENTIFIER_PATTERN = re.compile(r"[a-zA-Z][a-zA-Z0-9]*[-_][a-zA-Z0-9]+([-_][a-zA-Z0-9]+)*")
 
 _INTENT_PATTERNS = {
     "code": (
@@ -94,6 +93,7 @@ def _get_block_type_boosts(query: str) -> Dict[int, float]:
 @dataclass
 class SearchResult:
     """A single search hit."""
+
     doc_id: str
     block_idx: int
     score: float
@@ -149,29 +149,32 @@ class VectorStore:
             return 0
 
         assert embeddings.shape[0] == len(blocks), (
-            f"embeddings ({embeddings.shape[0]}) and blocks ({len(blocks)}) "
-            "must have same length"
+            f"embeddings ({embeddings.shape[0]}) and blocks ({len(blocks)}) must have same length"
         )
 
         entries = []
         for i, blk in enumerate(blocks):
-            entries.append({
-                "doc_id": doc_id,
-                "block_idx": i,
-                "content": blk.get("content", ""),
-                "block_type": blk.get("block_type", 0),
-                "summary": blk.get("summary", ""),
-                "token_count": blk.get("token_count", 0),
-                "metadata": blk.get("metadata", {}),
-            })
+            entries.append(
+                {
+                    "doc_id": doc_id,
+                    "block_idx": i,
+                    "content": blk.get("content", ""),
+                    "block_type": blk.get("block_type", 0),
+                    "summary": blk.get("summary", ""),
+                    "token_count": blk.get("token_count", 0),
+                    "metadata": blk.get("metadata", {}),
+                }
+            )
 
         if self._embeddings is None or len(self._embeddings) == 0:
             self._embeddings = embeddings.astype(np.float32)
         else:
-            self._embeddings = np.vstack([
-                self._embeddings,
-                embeddings.astype(np.float32),
-            ])
+            self._embeddings = np.vstack(
+                [
+                    self._embeddings,
+                    embeddings.astype(np.float32),
+                ]
+            )
         self._index.extend(entries)
 
         self._rebuild_bm25()
@@ -290,15 +293,17 @@ class VectorStore:
             if s < score_threshold:
                 continue
             entry = self._index[idx]
-            results.append(SearchResult(
-                doc_id=entry["doc_id"],
-                block_idx=entry["block_idx"],
-                score=s,
-                content=entry["content"],
-                block_type=entry["block_type"],
-                summary=entry.get("summary", ""),
-                metadata=entry.get("metadata", {}),
-            ))
+            results.append(
+                SearchResult(
+                    doc_id=entry["doc_id"],
+                    block_idx=entry["block_idx"],
+                    score=s,
+                    content=entry["content"],
+                    block_type=entry["block_type"],
+                    summary=entry.get("summary", ""),
+                    metadata=entry.get("metadata", {}),
+                )
+            )
 
         return results
 

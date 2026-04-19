@@ -29,13 +29,14 @@ ZSE_HF_ORG = "zse-zllm"
 @dataclass
 class CachedModel:
     """Metadata for a cached model."""
-    alias: str                    # Short name (e.g., "qwen-7b")
-    hf_model_id: str             # HuggingFace repo ID
-    zse_path: str                # Path to .zse file
-    quantization: str            # int4, int8, fp16
-    file_size_gb: float          # File size in GB
-    cached_at: str               # ISO timestamp
-    source: str                  # "pre-converted" or "local-convert"
+
+    alias: str  # Short name (e.g., "qwen-7b")
+    hf_model_id: str  # HuggingFace repo ID
+    zse_path: str  # Path to .zse file
+    quantization: str  # int4, int8, fp16
+    file_size_gb: float  # File size in GB
+    cached_at: str  # ISO timestamp
+    source: str  # "pre-converted" or "local-convert"
 
 
 class ModelCache:
@@ -89,10 +90,16 @@ class ModelCache:
 
         return None
 
-    def add(self, alias: str, hf_model_id: str, zse_path: Path,
-            quantization: str = "int4", source: str = "local-convert") -> CachedModel:
+    def add(
+        self,
+        alias: str,
+        hf_model_id: str,
+        zse_path: Path,
+        quantization: str = "int4",
+        source: str = "local-convert",
+    ) -> CachedModel:
         """Register a model in the cache."""
-        size_gb = zse_path.stat().st_size / (1024 ** 3)
+        size_gb = zse_path.stat().st_size / (1024**3)
         model = CachedModel(
             alias=alias,
             hf_model_id=hf_model_id,
@@ -204,7 +211,15 @@ def _build_alias_map() -> Dict[str, str]:
         provider = model.provider.lower().replace(" ", "")
 
         # "qwen-7b", "llama-8b", "mistral-7b"
-        if provider in ("qwen", "meta", "mistral ai", "google", "microsoft", "deepseek", "tinyllama"):
+        if provider in (
+            "qwen",
+            "meta",
+            "mistral ai",
+            "google",
+            "microsoft",
+            "deepseek",
+            "tinyllama",
+        ):
             short_provider = {
                 "qwen": "qwen",
                 "meta": "llama",
@@ -238,6 +253,7 @@ def check_hf_repo_exists(repo_id: str) -> bool:
     """Check if a HuggingFace repo exists (without downloading)."""
     try:
         from huggingface_hub import repo_info
+
         repo_info(repo_id)
         return True
     except Exception:
@@ -253,6 +269,7 @@ def get_hf_token() -> Optional[str]:
     # Also check HF's own token
     try:
         from huggingface_hub import HfFolder
+
         return HfFolder.get_token()
     except Exception:
         return None

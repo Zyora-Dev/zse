@@ -43,9 +43,7 @@ test_image = (
     )
 )
 
-test_image_with_code = test_image.add_local_dir(
-    ZSE_ROOT, remote_path="/root/zse"
-)
+test_image_with_code = test_image.add_local_dir(ZSE_ROOT, remote_path="/root/zse")
 
 
 @app.function(
@@ -57,6 +55,7 @@ test_image_with_code = test_image.add_local_dir(
 def test_tp_pp():
     """Test combined TP+PP with 4x A10G GPUs."""
     import traceback
+
     try:
         return _run_test()
     except Exception as e:
@@ -68,6 +67,7 @@ def test_tp_pp():
 def _run_test():
     print(">>> TP-PP test entered", flush=True)
     import subprocess
+
     subprocess.check_call(
         [sys.executable, "-m", "pip", "install", "-e", ".", "-q"],
         cwd="/root/zse",
@@ -80,14 +80,14 @@ def _run_test():
     from huggingface_hub import hf_hub_download
 
     gpu_count = torch.cuda.device_count()
-    print(f"\n{'='*60}", flush=True)
+    print(f"\n{'=' * 60}", flush=True)
     print(f"ZSE Combined TP+PP Parallelism Test", flush=True)
     print(f"GPUs: {gpu_count}", flush=True)
     for i in range(gpu_count):
         name = torch.cuda.get_device_name(i)
         total = torch.cuda.get_device_properties(i).total_memory / 1024**3
         print(f"  GPU {i}: {name} ({total:.1f} GB)", flush=True)
-    print(f"{'='*60}\n", flush=True)
+    print(f"{'=' * 60}\n", flush=True)
 
     assert gpu_count >= 4, f"Need >= 4 GPUs, got {gpu_count}"
 
@@ -103,6 +103,7 @@ def _run_test():
 
     # Prepare prompt
     from zse.format.reader_v2 import load_zse_model
+
     _, tokenizer, _ = load_zse_model(target_path, device="cuda:0")
     messages = [{"role": "user", "content": PROMPT}]
     prompt_text = tokenizer.apply_chat_template(
@@ -120,9 +121,9 @@ def _run_test():
     results = {}
 
     # ── Test: TP=2 × PP=2 (combined) ───────────────────────────
-    print(f"{'─'*60}", flush=True)
+    print(f"{'─' * 60}", flush=True)
     print("TEST: Combined TP=2 × PP=2 (4 GPUs)", flush=True)
-    print(f"{'─'*60}", flush=True)
+    print(f"{'─' * 60}", flush=True)
 
     from zse.core.zdistributed.tp_pp_parallel import TPPPCoordinator
 
@@ -158,9 +159,9 @@ def _run_test():
     tppp_coord.shutdown()
 
     # ── Summary ─────────────────────────────────────────────────
-    print(f"{'='*60}", flush=True)
+    print(f"{'=' * 60}", flush=True)
     print(f"TP2×PP2:  {tps_tppp:.1f} tok/s", flush=True)
-    print(f"{'='*60}", flush=True)
+    print(f"{'=' * 60}", flush=True)
 
     # Validations
     tokens_tppp = out_tppp.shape[1] - prompt_len

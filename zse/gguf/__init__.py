@@ -18,14 +18,14 @@ Usage:
     if is_gguf_file("model.gguf"):
         wrapper = GGUFWrapper("model.gguf")
         wrapper.load()
-        
+
         # Generate text
         for text in wrapper.generate("Hello"):
             print(text, end="")
 
 Requirements:
     pip install llama-cpp-python
-    
+
     For GPU support:
     CMAKE_ARGS="-DLLAMA_CUDA=on" pip install llama-cpp-python
 """
@@ -58,7 +58,7 @@ __all__ = [
     "is_gguf_file",
     # Backend
     "LlamaCppBackend",
-    "GGUFModelConfig", 
+    "GGUFModelConfig",
     "GGUFGenerationConfig",
     "check_llama_cpp_available",
     # Wrapper

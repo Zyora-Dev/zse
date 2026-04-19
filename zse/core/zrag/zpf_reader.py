@@ -30,9 +30,10 @@ from .zpf_spec import (
 @dataclass
 class ZPFFile:
     """Fully loaded .zpf file."""
+
     header: ZPFHeader
     blocks: List[SemanticBlock]
-    embeddings: np.ndarray   # (block_count, embed_dim) float32
+    embeddings: np.ndarray  # (block_count, embed_dim) float32
 
 
 class ZPFReader:
@@ -63,18 +64,14 @@ class ZPFReader:
             # Magic
             magic = f.read(4)
             if magic != ZPF_MAGIC:
-                raise ValueError(
-                    f"Not a .zpf file: bad magic {magic!r} "
-                    f"(expected {ZPF_MAGIC!r})"
-                )
+                raise ValueError(f"Not a .zpf file: bad magic {magic!r} (expected {ZPF_MAGIC!r})")
 
             # Version
             version = struct.unpack("4B", f.read(4))
             # Allow reading any v1.x
             if version[0] != ZPF_VERSION[0]:
                 raise ValueError(
-                    f"Unsupported .zpf version: {version}, "
-                    f"expected major={ZPF_VERSION[0]}"
+                    f"Unsupported .zpf version: {version}, expected major={ZPF_VERSION[0]}"
                 )
 
             # Header
@@ -144,14 +141,16 @@ class ZPFReader:
             for i, entry in enumerate(self._index):
                 f.seek(self._content_offset + entry["offset"])
                 content = f.read(entry["size"]).decode("utf-8")
-                blocks.append(SemanticBlock(
-                    block_type=BlockType(entry["block_type"]),
-                    content=content,
-                    token_count=entry.get("token_count", 0),
-                    semantic_hash=entry.get("semantic_hash", ""),
-                    summary=entry.get("summary", ""),
-                    source_range=tuple(entry.get("source_range", [0, 0])),
-                ))
+                blocks.append(
+                    SemanticBlock(
+                        block_type=BlockType(entry["block_type"]),
+                        content=content,
+                        token_count=entry.get("token_count", 0),
+                        semantic_hash=entry.get("semantic_hash", ""),
+                        summary=entry.get("summary", ""),
+                        source_range=tuple(entry.get("source_range", [0, 0])),
+                    )
+                )
         return blocks
 
     def embeddings(self) -> np.ndarray:
@@ -159,7 +158,9 @@ class ZPFReader:
         Load all embeddings as a (block_count, embed_dim) float32 array.
         """
         if not self._header or self._header.block_count == 0:
-            return np.zeros((0, self._header.embedding_dim if self._header else 384), dtype=np.float32)
+            return np.zeros(
+                (0, self._header.embedding_dim if self._header else 384), dtype=np.float32
+            )
 
         dim = self._header.embedding_dim
         count = self._header.block_count
@@ -227,7 +228,9 @@ def read_zpf_bytes(data: bytes) -> ZPFFile:
     dim = header.embedding_dim
     count = header.block_count
     if emb_len >= count * dim * 4:
-        embeddings = np.frombuffer(emb_data[:count * dim * 4], dtype=np.float32).reshape(count, dim).copy()
+        embeddings = (
+            np.frombuffer(emb_data[: count * dim * 4], dtype=np.float32).reshape(count, dim).copy()
+        )
     else:
         embeddings = np.zeros((count, dim), dtype=np.float32)
 
@@ -237,13 +240,15 @@ def read_zpf_bytes(data: bytes) -> ZPFFile:
     for entry in index:
         buf.seek(content_start + entry["offset"])
         content = buf.read(entry["size"]).decode("utf-8")
-        blocks.append(SemanticBlock(
-            block_type=BlockType(entry["block_type"]),
-            content=content,
-            token_count=entry.get("token_count", 0),
-            semantic_hash=entry.get("semantic_hash", ""),
-            summary=entry.get("summary", ""),
-            source_range=tuple(entry.get("source_range", [0, 0])),
-        ))
+        blocks.append(
+            SemanticBlock(
+                block_type=BlockType(entry["block_type"]),
+                content=content,
+                token_count=entry.get("token_count", 0),
+                semantic_hash=entry.get("semantic_hash", ""),
+                summary=entry.get("summary", ""),
+                source_range=tuple(entry.get("source_range", [0, 0])),
+            )
+        )
 
     return ZPFFile(header=header, blocks=blocks, embeddings=embeddings)

@@ -1,5 +1,7 @@
 """Calculate ZPF break-even point: ingestion overhead vs per-query token savings."""
+
 import os, sys, time, tempfile
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from benchmarks.zpf_cost_bench import DOC_CNN, PlainChunker, PlainVectorSearch
@@ -36,9 +38,9 @@ zpf_avg = sum(zpf_times) / len(zpf_times)
 plain_avg = sum(plain_times) / len(plain_times)
 overhead = zpf_avg - plain_avg
 
-print(f"ZPF ingestion:   {zpf_avg*1000:.0f}ms avg ({N_RUNS} runs)")
-print(f"Plain ingestion: {plain_avg*1000:.0f}ms avg ({N_RUNS} runs)")
-print(f"ZPF overhead:    {overhead*1000:.0f}ms per document")
+print(f"ZPF ingestion:   {zpf_avg * 1000:.0f}ms avg ({N_RUNS} runs)")
+print(f"Plain ingestion: {plain_avg * 1000:.0f}ms avg ({N_RUNS} runs)")
+print(f"ZPF overhead:    {overhead * 1000:.0f}ms per document")
 print()
 
 # Per-query savings (from cost benchmark results)

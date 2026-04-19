@@ -283,7 +283,11 @@ QA_PAIRS = [
         "id": 1,
         "group": "Definition",
         "question": "What is gradient descent?",
-        "answer_fragments": ["iterative optimization algorithm", "minimum", "differentiable function"],
+        "answer_fragments": [
+            "iterative optimization algorithm",
+            "minimum",
+            "differentiable function",
+        ],
         "source": "gradient",
     },
     {
@@ -300,7 +304,6 @@ QA_PAIRS = [
         "answer_fragments": ["entire training dataset", "single randomly selected sample"],
         "source": "gradient",
     },
-
     # === Group 2: Procedural retrieval ===
     {
         "id": 4,
@@ -323,7 +326,6 @@ QA_PAIRS = [
         "answer_fragments": ["LoraConfig", "r=16", "target_modules"],
         "source": "finetune",
     },
-
     # === Group 3: Specific detail retrieval ===
     {
         "id": 7,
@@ -346,7 +348,6 @@ QA_PAIRS = [
         "answer_fragments": ["ZSE_KV_QUANT", "int8"],
         "source": "deployment",
     },
-
     # === Group 4: Cross-section retrieval ===
     {
         "id": 10,
@@ -369,7 +370,6 @@ QA_PAIRS = [
         "answer_fragments": ["56 GB", "16-18 GB"],
         "source": "finetune",
     },
-
     # === Group 5: Noise-adjacent retrieval ===
     {
         "id": 13,
@@ -398,6 +398,7 @@ QA_PAIRS = [
 # ============================================================================
 # Plain fixed-size chunker baseline (no semantic awareness)
 # ============================================================================
+
 
 class PlainChunker:
     """
@@ -477,6 +478,7 @@ class PlainVectorSearch:
 # Scoring
 # ============================================================================
 
+
 def score_answer(context: str, answer_fragments: List[str]) -> str:
     """
     Score retrieval quality:
@@ -503,6 +505,7 @@ def score_to_points(score: str) -> float:
 # ============================================================================
 # Main evaluation
 # ============================================================================
+
 
 def run_eval():
     print("=" * 80)
@@ -543,7 +546,9 @@ def run_eval():
             plain_search.ingest(content)
 
         zpf_stats = zpf_pipeline.stats
-        print(f"  ZPF:   {zpf_stats['total_documents']} docs, {zpf_stats['total_blocks']} semantic blocks")
+        print(
+            f"  ZPF:   {zpf_stats['total_documents']} docs, {zpf_stats['total_blocks']} semantic blocks"
+        )
         print(f"  Plain: {len(plain_search.chunks)} fixed-size chunks")
         print()
 
@@ -585,8 +590,12 @@ def run_eval():
                 plain_results.append(plain_score)
 
                 # Format markers
-                zpf_mark = {"HIT": "  \u2705", "PART": "  \u26a0\ufe0f", "MISS": "  \u274c"}[zpf_score]
-                plain_mark = {"HIT": "   \u2705", "PART": "   \u26a0\ufe0f", "MISS": "   \u274c"}[plain_score]
+                zpf_mark = {"HIT": "  \u2705", "PART": "  \u26a0\ufe0f", "MISS": "  \u274c"}[
+                    zpf_score
+                ]
+                plain_mark = {"HIT": "   \u2705", "PART": "   \u26a0\ufe0f", "MISS": "   \u274c"}[
+                    plain_score
+                ]
 
                 q_short = question[:40] + ".." if len(question) > 42 else question
                 print(f"{qid:<4} {group:<15} {q_short:<42} {zpf_mark} {plain_mark}")
@@ -606,8 +615,12 @@ def run_eval():
             plain_parts = plain_results.count("PART")
             plain_misses = plain_results.count("MISS")
 
-            print(f"  ZPF:   {zpf_hits} HIT | {zpf_parts} PARTIAL | {zpf_misses} MISS  —  Score: {zpf_points:.1f}/15")
-            print(f"  Plain: {plain_hits} HIT | {plain_parts} PARTIAL | {plain_misses} MISS  —  Score: {plain_points:.1f}/15")
+            print(
+                f"  ZPF:   {zpf_hits} HIT | {zpf_parts} PARTIAL | {zpf_misses} MISS  —  Score: {zpf_points:.1f}/15"
+            )
+            print(
+                f"  Plain: {plain_hits} HIT | {plain_parts} PARTIAL | {plain_misses} MISS  —  Score: {plain_points:.1f}/15"
+            )
             print()
 
             all_results[budget_label] = {
@@ -620,7 +633,7 @@ def run_eval():
             # Group breakdown
             groups = ["Definition", "Procedure", "Detail", "Cross-section", "Noise-adjacent"]
             print(f"  {'Group':<16} {'ZPF':>12} {'Plain':>12}")
-            print(f"  {'-'*40}")
+            print(f"  {'-' * 40}")
             for g in groups:
                 g_indices = [i for i, qa in enumerate(QA_PAIRS) if qa["group"] == g]
                 zpf_g = sum(score_to_points(zpf_results[i]) for i in g_indices)
@@ -630,9 +643,11 @@ def run_eval():
             print()
 
             # Detail on misses/partials
-            problems = [(i, qa, zpf_results[i], plain_results[i])
-                        for i, qa in enumerate(QA_PAIRS)
-                        if zpf_results[i] != "HIT" or plain_results[i] != "HIT"]
+            problems = [
+                (i, qa, zpf_results[i], plain_results[i])
+                for i, qa in enumerate(QA_PAIRS)
+                if zpf_results[i] != "HIT" or plain_results[i] != "HIT"
+            ]
             if problems:
                 print("  NON-PERFECT RETRIEVALS:")
                 for i, qa, zs, ps in problems:
@@ -646,7 +661,9 @@ def run_eval():
                     print(f"         {' | '.join(who)}")
                     # Show which fragments were found/missing
                     zpf_ctx = zpf_pipeline.get_context(qa["question"], max_tokens=max_tok, top_k=3)
-                    plain_ctx = plain_search.get_context(qa["question"], max_tokens=max_tok, top_k=3)
+                    plain_ctx = plain_search.get_context(
+                        qa["question"], max_tokens=max_tok, top_k=3
+                    )
                     for frag in qa["answer_fragments"]:
                         zf = "\u2705" if frag.lower() in zpf_ctx.lower() else "\u274c"
                         pf = "\u2705" if frag.lower() in plain_ctx.lower() else "\u274c"
@@ -659,12 +676,14 @@ def run_eval():
         print("=" * 80)
         print()
         print(f"  {'Budget':<16} {'ZPF Score':>12} {'Plain Score':>14} {'Delta':>8}")
-        print(f"  {'-'*52}")
+        print(f"  {'-' * 52}")
         for budget_label in ["200 tokens", "500 tokens"]:
             r = all_results[budget_label]
             delta = r["zpf_points"] - r["plain_points"]
             sign = "+" if delta >= 0 else ""
-            print(f"  {budget_label:<16} {r['zpf_points']:>8.1f}/15   {r['plain_points']:>8.1f}/15   {sign}{delta:.1f}")
+            print(
+                f"  {budget_label:<16} {r['zpf_points']:>8.1f}/15   {r['plain_points']:>8.1f}/15   {sign}{delta:.1f}"
+            )
         print()
 
         # Token usage
@@ -673,8 +692,12 @@ def run_eval():
             zpf_total = 0
             plain_total = 0
             for qa in QA_PAIRS:
-                zpf_total += len(zpf_pipeline.get_context(qa["question"], max_tokens=max_tok, top_k=3)) // 4
-                plain_total += len(plain_search.get_context(qa["question"], max_tokens=max_tok, top_k=3)) // 4
+                zpf_total += (
+                    len(zpf_pipeline.get_context(qa["question"], max_tokens=max_tok, top_k=3)) // 4
+                )
+                plain_total += (
+                    len(plain_search.get_context(qa["question"], max_tokens=max_tok, top_k=3)) // 4
+                )
             print(f"    {budget_label}: ZPF {zpf_total:,} tokens | Plain {plain_total:,} tokens")
         print()
 

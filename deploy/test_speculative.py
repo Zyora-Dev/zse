@@ -40,9 +40,7 @@ test_image = (
     )
 )
 
-test_image_with_code = test_image.add_local_dir(
-    ZSE_ROOT, remote_path="/root/zse"
-)
+test_image_with_code = test_image.add_local_dir(ZSE_ROOT, remote_path="/root/zse")
 
 
 @app.function(
@@ -54,6 +52,7 @@ test_image_with_code = test_image.add_local_dir(
 def test_speculative_decoding():
     """Test speculative decoding on GPU with real models."""
     import subprocess
+
     subprocess.check_call(
         [sys.executable, "-m", "pip", "install", "-e", ".", "-q"],
         cwd="/root/zse",
@@ -62,11 +61,12 @@ def test_speculative_decoding():
         sys.path.insert(0, "/root/zse")
 
     import torch
-    print(f"\n{'='*60}")
+
+    print(f"\n{'=' * 60}")
     print(f"ZSE Speculative Decoding Test")
     print(f"GPU: {torch.cuda.get_device_name(0)}")
     print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     # ── Load Models ──────────────────────────────────────────────
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
@@ -122,15 +122,17 @@ def test_speculative_decoding():
 
     # Prepare input
     messages = [{"role": "user", "content": PROMPT}]
-    prompt_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    prompt_text = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
     input_ids = tokenizer(prompt_text, return_tensors="pt").input_ids.to("cuda:0")
     prompt_len = input_ids.shape[1]
     print(f"Prompt tokens: {prompt_len}\n")
 
     # ── Test 1: Standard Decoding (baseline) ────────────────────
-    print(f"{'─'*60}")
+    print(f"{'─' * 60}")
     print("TEST 1: Standard Decoding (baseline)")
-    print(f"{'─'*60}")
+    print(f"{'─' * 60}")
 
     torch.cuda.synchronize()
     start = time.perf_counter()
@@ -156,9 +158,9 @@ def test_speculative_decoding():
     print()
 
     # ── Test 2: Speculative Decoding ────────────────────────────
-    print(f"{'─'*60}")
+    print(f"{'─' * 60}")
     print("TEST 2: Speculative Decoding (draft=0.5B, target=7B)")
-    print(f"{'─'*60}")
+    print(f"{'─' * 60}")
 
     from zse.core.zspec import SpeculativeDecoder, SpeculativeConfig
 
@@ -210,9 +212,9 @@ def test_speculative_decoding():
     print()
 
     # ── Test 3: Via SpeculativeTextGenerator (pipeline test) ────
-    print(f"{'─'*60}")
+    print(f"{'─' * 60}")
     print("TEST 3: Full Pipeline (SpeculativeTextGenerator)")
-    print(f"{'─'*60}")
+    print(f"{'─' * 60}")
 
     from zse.engine.generation import SpeculativeTextGenerator, SamplingParams
 
@@ -250,15 +252,15 @@ def test_speculative_decoding():
     print()
 
     # ── Summary ─────────────────────────────────────────────────
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print("SUMMARY")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"  Baseline:     {baseline_tps:.1f} tok/s")
-    print(f"  Speculative:  {spec_tps:.1f} tok/s ({spec_tps/baseline_tps:.2f}x)")
-    print(f"  Pipeline:     {pipeline_tps:.1f} tok/s ({pipeline_tps/baseline_tps:.2f}x)")
+    print(f"  Speculative:  {spec_tps:.1f} tok/s ({spec_tps / baseline_tps:.2f}x)")
+    print(f"  Pipeline:     {pipeline_tps:.1f} tok/s ({pipeline_tps / baseline_tps:.2f}x)")
     print(f"  Accept rate:  {stats['avg_acceptance_rate']:.1%}")
-    print(f"  VRAM used:    {torch.cuda.memory_allocated()/1024**3:.2f} GB")
-    print(f"{'='*60}")
+    print(f"  VRAM used:    {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+    print(f"{'=' * 60}")
 
     passed = spec_tokens > 0 and spec_tps > 0
     status = "PASS" if passed else "FAIL"
@@ -286,8 +288,8 @@ def main():
 
     result = test_speculative_decoding.remote()
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("RESULT FROM MODAL:")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     for k, v in result.items():
         print(f"  {k}: {v}")

@@ -37,9 +37,7 @@ test_image = (
     )
 )
 
-test_image_with_code = test_image.add_local_dir(
-    ZSE_ROOT, remote_path="/root/zse"
-)
+test_image_with_code = test_image.add_local_dir(ZSE_ROOT, remote_path="/root/zse")
 
 
 @app.function(
@@ -51,6 +49,7 @@ test_image_with_code = test_image.add_local_dir(
 def test_pipeline_parallel():
     """Test pipeline parallelism with 2x A10G GPUs."""
     import traceback
+
     try:
         return _run_test()
     except Exception as e:
@@ -62,6 +61,7 @@ def test_pipeline_parallel():
 def _run_test():
     print(">>> PP test entered", flush=True)
     import subprocess
+
     subprocess.check_call(
         [sys.executable, "-m", "pip", "install", "-e", ".", "-q"],
         cwd="/root/zse",
@@ -73,14 +73,14 @@ def _run_test():
     from huggingface_hub import hf_hub_download
 
     gpu_count = torch.cuda.device_count()
-    print(f"\n{'='*60}", flush=True)
+    print(f"\n{'=' * 60}", flush=True)
     print(f"ZSE Pipeline Parallelism Test", flush=True)
     print(f"GPUs: {gpu_count}", flush=True)
     for i in range(gpu_count):
         name = torch.cuda.get_device_name(i)
         vram = torch.cuda.get_device_properties(i).total_memory / 1024**3
         print(f"  GPU {i}: {name} ({vram:.1f} GB)", flush=True)
-    print(f"{'='*60}\n", flush=True)
+    print(f"{'=' * 60}\n", flush=True)
 
     assert gpu_count >= 2, f"Need >= 2 GPUs, got {gpu_count}"
 
@@ -96,9 +96,9 @@ def _run_test():
     print(flush=True)
 
     # ── Test 1: Single GPU baseline ─────────────────────────────
-    print(f"{'─'*60}", flush=True)
+    print(f"{'─' * 60}", flush=True)
     print("TEST 1: Single GPU Baseline (GPU 0 only)", flush=True)
-    print(f"{'─'*60}", flush=True)
+    print(f"{'─' * 60}", flush=True)
 
     from zse.format.reader_v2 import load_zse_model
 
@@ -108,7 +108,9 @@ def _run_test():
     print(f"  VRAM: {vram_1gpu:.2f} GB", flush=True)
 
     messages = [{"role": "user", "content": PROMPT}]
-    prompt_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    prompt_text = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
     input_ids = tokenizer(prompt_text, return_tensors="pt").input_ids.to("cuda:0")
     prompt_len = input_ids.shape[1]
     print(f"  Prompt tokens: {prompt_len}", flush=True)
@@ -123,7 +125,10 @@ def _run_test():
     start = time.perf_counter()
     with torch.no_grad():
         out_1gpu = model_1gpu.generate(
-            input_ids, max_new_tokens=MAX_TOKENS, do_sample=False, use_cache=True,
+            input_ids,
+            max_new_tokens=MAX_TOKENS,
+            do_sample=False,
+            use_cache=True,
         )
     torch.cuda.synchronize()
     time_1gpu = time.perf_counter() - start
@@ -140,12 +145,14 @@ def _run_test():
     # Free single GPU model
     del model_1gpu
     torch.cuda.empty_cache()
-    import gc; gc.collect()
+    import gc
+
+    gc.collect()
 
     # ── Test 2: Pipeline Parallel (2 GPUs) ──────────────────────
-    print(f"{'─'*60}", flush=True)
+    print(f"{'─' * 60}", flush=True)
     print("TEST 2: Pipeline Parallel (2x GPU, PP=2)", flush=True)
-    print(f"{'─'*60}", flush=True)
+    print(f"{'─' * 60}", flush=True)
 
     from zse.core.zdistributed.pipeline_parallel import PPCoordinator
 
@@ -170,7 +177,9 @@ def _run_test():
     torch.cuda.synchronize(1)
     start = time.perf_counter()
     out_pp = coord.generate(
-        input_ids_pp, max_new_tokens=MAX_TOKENS, do_sample=False,
+        input_ids_pp,
+        max_new_tokens=MAX_TOKENS,
+        do_sample=False,
     )
     torch.cuda.synchronize(0)
     torch.cuda.synchronize(1)
@@ -194,13 +203,13 @@ def _run_test():
     # ── Summary ─────────────────────────────────────────────────
     speedup = tps_pp / tps_1gpu if tps_1gpu > 0 else 0
 
-    print(f"{'='*60}", flush=True)
+    print(f"{'=' * 60}", flush=True)
     print(f"RESULTS SUMMARY", flush=True)
-    print(f"{'='*60}", flush=True)
+    print(f"{'=' * 60}", flush=True)
     print(f"  Single GPU:   {tps_1gpu:.1f} tok/s  |  {vram_1gpu:.2f} GB VRAM", flush=True)
     print(f"  PP=2:         {tps_pp:.1f} tok/s", flush=True)
     print(f"  Speedup:      {speedup:.2f}x", flush=True)
-    print(f"{'='*60}", flush=True)
+    print(f"{'=' * 60}", flush=True)
 
     assert tokens_pp > 10, f"Too few tokens: {tokens_pp}"
     assert len(text_pp) > 50, f"Output too short: {text_pp}"

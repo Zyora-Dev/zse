@@ -8,12 +8,12 @@ Accelerates autoregressive generation using speculation:
 
 Usage:
     from zse.core.zspec import SpeculativeDecoder
-    
+
     decoder = SpeculativeDecoder(
         target_model=llama_7b,
         draft_model=llama_1b,
     )
-    
+
     for output in decoder.generate(input_ids, max_tokens=100):
         print(f"Generated {output.num_accepted} tokens")
 """

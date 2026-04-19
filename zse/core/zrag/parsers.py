@@ -18,9 +18,10 @@ from typing import Any, Dict, List, Optional
 @dataclass
 class ParsedSection:
     """A structural section from a parsed document."""
+
     text: str
     heading: Optional[str] = None
-    level: int = 0              # heading level (1=h1, 2=h2, etc.)
+    level: int = 0  # heading level (1=h1, 2=h2, etc.)
     page: Optional[int] = None  # for PDFs
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -28,7 +29,8 @@ class ParsedSection:
 @dataclass
 class ParsedDocument:
     """Unified output from any parser."""
-    text: str                         # Full extracted text
+
+    text: str  # Full extracted text
     title: str = ""
     source_type: str = "unknown"
     sections: List[ParsedSection] = field(default_factory=list)
@@ -96,6 +98,7 @@ def parse_bytes(data: bytes, filename: str) -> ParsedDocument:
 # Individual Parsers
 # ---------------------------------------------------------------------------
 
+
 def _parse_text(data: bytes, filename: str) -> ParsedDocument:
     """Parse plain text."""
     text = data.decode("utf-8", errors="replace")
@@ -121,13 +124,15 @@ def _parse_markdown(data: bytes, filename: str) -> ParsedDocument:
     for m in heading_re.finditer(text):
         # Save previous section
         if last_end < m.start():
-            section_text = text[last_end:m.start()].strip()
+            section_text = text[last_end : m.start()].strip()
             if section_text:
-                sections.append(ParsedSection(
-                    text=section_text,
-                    heading=current_heading,
-                    level=current_level,
-                ))
+                sections.append(
+                    ParsedSection(
+                        text=section_text,
+                        heading=current_heading,
+                        level=current_level,
+                    )
+                )
 
         current_level = len(m.group(1))
         current_heading = m.group(2).strip()
@@ -139,11 +144,13 @@ def _parse_markdown(data: bytes, filename: str) -> ParsedDocument:
     if last_end < len(text):
         section_text = text[last_end:].strip()
         if section_text:
-            sections.append(ParsedSection(
-                text=section_text,
-                heading=current_heading,
-                level=current_level,
-            ))
+            sections.append(
+                ParsedSection(
+                    text=section_text,
+                    heading=current_heading,
+                    level=current_level,
+                )
+            )
 
     if not sections:
         sections = [ParsedSection(text=text)]
@@ -237,6 +244,7 @@ def _parse_html(data: bytes, filename: str) -> ParsedDocument:
     # Try BeautifulSoup first
     try:
         from bs4 import BeautifulSoup
+
         soup = BeautifulSoup(text, "html.parser")
 
         # Extract title
@@ -265,11 +273,13 @@ def _parse_html(data: bytes, filename: str) -> ParsedDocument:
                 sibling = sibling.find_next_sibling()
 
             if content_parts:
-                sections.append(ParsedSection(
-                    text="\n".join(content_parts),
-                    heading=heading_text,
-                    level=level,
-                ))
+                sections.append(
+                    ParsedSection(
+                        text="\n".join(content_parts),
+                        heading=heading_text,
+                        level=level,
+                    )
+                )
 
         clean_text = soup.get_text(separator="\n")
         # Clean up whitespace
@@ -302,6 +312,7 @@ def _parse_pdf(data: bytes, filename: str) -> ParsedDocument:
     # Try pypdf first
     try:
         from pypdf import PdfReader
+
         reader = PdfReader(io.BytesIO(data))
 
         for i, page in enumerate(reader.pages):
@@ -309,11 +320,13 @@ def _parse_pdf(data: bytes, filename: str) -> ParsedDocument:
             page_text = page_text.strip()
             if page_text:
                 all_text_parts.append(page_text)
-                sections.append(ParsedSection(
-                    text=page_text,
-                    heading=f"Page {i + 1}",
-                    page=i + 1,
-                ))
+                sections.append(
+                    ParsedSection(
+                        text=page_text,
+                        heading=f"Page {i + 1}",
+                        page=i + 1,
+                    )
+                )
 
         # Try to get title from metadata
         meta = reader.metadata
@@ -324,21 +337,23 @@ def _parse_pdf(data: bytes, filename: str) -> ParsedDocument:
         # Try pdfplumber
         try:
             import pdfplumber
+
             with pdfplumber.open(io.BytesIO(data)) as pdf:
                 for i, page in enumerate(pdf.pages):
                     page_text = page.extract_text() or ""
                     page_text = page_text.strip()
                     if page_text:
                         all_text_parts.append(page_text)
-                        sections.append(ParsedSection(
-                            text=page_text,
-                            heading=f"Page {i + 1}",
-                            page=i + 1,
-                        ))
+                        sections.append(
+                            ParsedSection(
+                                text=page_text,
+                                heading=f"Page {i + 1}",
+                                page=i + 1,
+                            )
+                        )
         except ImportError:
             raise ImportError(
-                "PDF parsing requires 'pypdf' or 'pdfplumber'. "
-                "Install: pip install pypdf"
+                "PDF parsing requires 'pypdf' or 'pdfplumber'. Install: pip install pypdf"
             )
 
     full_text = "\n\n".join(all_text_parts)
@@ -350,10 +365,7 @@ def _parse_docx(data: bytes, filename: str) -> ParsedDocument:
     try:
         from docx import Document as DocxDocument
     except ImportError:
-        raise ImportError(
-            "DOCX parsing requires 'python-docx'. "
-            "Install: pip install python-docx"
-        )
+        raise ImportError("DOCX parsing requires 'python-docx'. Install: pip install python-docx")
 
     doc = DocxDocument(io.BytesIO(data))
     sections: List[ParsedSection] = []
@@ -374,11 +386,13 @@ def _parse_docx(data: bytes, filename: str) -> ParsedDocument:
         if "heading" in style_name:
             # Flush previous section
             if current_parts:
-                sections.append(ParsedSection(
-                    text="\n".join(current_parts),
-                    heading=current_heading,
-                    level=current_level,
-                ))
+                sections.append(
+                    ParsedSection(
+                        text="\n".join(current_parts),
+                        heading=current_heading,
+                        level=current_level,
+                    )
+                )
                 current_parts = []
 
             # Parse heading level
@@ -396,11 +410,13 @@ def _parse_docx(data: bytes, filename: str) -> ParsedDocument:
 
     # Flush last section
     if current_parts:
-        sections.append(ParsedSection(
-            text="\n".join(current_parts),
-            heading=current_heading,
-            level=current_level,
-        ))
+        sections.append(
+            ParsedSection(
+                text="\n".join(current_parts),
+                heading=current_heading,
+                level=current_level,
+            )
+        )
 
     if not sections:
         full = "\n".join(all_text_parts)

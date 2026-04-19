@@ -100,6 +100,7 @@ QA_PAIRS = [
 # Plain fixed-size chunker baseline (no semantic awareness)
 # ============================================================================
 
+
 class PlainChunker:
     """
     Baseline: fixed-size text chunking with overlap.
@@ -190,6 +191,7 @@ class PlainVectorSearch:
 # Evaluation
 # ============================================================================
 
+
 def check_answer(context: str, answer_fragments: List[str]) -> bool:
     """Check if ALL answer fragments appear in the context (case-insensitive)."""
     context_lower = context.lower()
@@ -241,9 +243,9 @@ def run_eval():
 
         # --- Run evaluation at multiple token budgets ---
         for budget_label, max_tok in [("Tight (200 tokens)", 200), ("Normal (500 tokens)", 500)]:
-            print(f"\n{'='*75}")
+            print(f"\n{'=' * 75}")
             print(f"  EVALUATION — {budget_label}")
-            print(f"{'='*75}")
+            print(f"{'=' * 75}")
             print()
 
             zpf_hits = 0
@@ -284,14 +286,18 @@ def run_eval():
                 plain_mark = "   HIT" if plain_found else "  MISS"
 
                 q_short = question[:53] + ".." if len(question) > 55 else question
-                print(f"{i+1:<3} {q_short:<55} {zpf_mark} {plain_mark} {top_score:>9.3f}")
+                print(f"{i + 1:<3} {q_short:<55} {zpf_mark} {plain_mark} {top_score:>9.3f}")
 
             print("-" * 82)
             print()
 
             # --- Summary ---
-            print(f"  ZPF semantic retrieval:    {zpf_hits}/{len(QA_PAIRS)} correct ({100*zpf_hits/len(QA_PAIRS):.0f}%)")
-            print(f"  Plain fixed-size chunking: {plain_hits}/{len(QA_PAIRS)} correct ({100*plain_hits/len(QA_PAIRS):.0f}%)")
+            print(
+                f"  ZPF semantic retrieval:    {zpf_hits}/{len(QA_PAIRS)} correct ({100 * zpf_hits / len(QA_PAIRS):.0f}%)"
+            )
+            print(
+                f"  Plain fixed-size chunking: {plain_hits}/{len(QA_PAIRS)} correct ({100 * plain_hits / len(QA_PAIRS):.0f}%)"
+            )
             print()
             print(f"  ZPF avg top-1 similarity:   {np.mean(zpf_scores):.3f}")
             print(f"  Plain avg top-1 similarity: {np.mean(plain_scores):.3f}")
@@ -328,7 +334,7 @@ def run_eval():
                         who.append("ZPF")
                     if not plain_ok:
                         who.append("Plain")
-                    print(f"    Q{idx+1}: {qa['question'][:60]} — missed by: {', '.join(who)}")
+                    print(f"    Q{idx + 1}: {qa['question'][:60]} — missed by: {', '.join(who)}")
                 print()
 
         # Final conclusion

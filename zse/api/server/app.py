@@ -26,13 +26,27 @@ from zse.api.server.mcp_routes import router as mcp_router
 
 from zse.api.server.models import (
     # OpenAI-compatible
-    ChatCompletionRequest, ChatCompletionResponse, ChatCompletionChoice,
-    ChatCompletionChunk, ChatMessage, CompletionRequest, CompletionResponse,
-    CompletionChoice, UsageStats, ModelInfo, ModelListResponse, ErrorResponse,
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+    ChatCompletionChoice,
+    ChatCompletionChunk,
+    ChatMessage,
+    CompletionRequest,
+    CompletionResponse,
+    CompletionChoice,
+    UsageStats,
+    ModelInfo,
+    ModelListResponse,
+    ErrorResponse,
     # ZSE-specific
-    LoadModelRequest, LoadModelResponse, UnloadModelRequest,
-    HealthResponse, SystemStats, AnalyticsOverview, AnalyticsTimeSeries,
-    RequestMetrics
+    LoadModelRequest,
+    LoadModelResponse,
+    UnloadModelRequest,
+    HealthResponse,
+    SystemStats,
+    AnalyticsOverview,
+    AnalyticsTimeSeries,
+    RequestMetrics,
 )
 from zse.api.server.state import server_state, LoadedModel
 from zse.api.server.batching import (
@@ -47,6 +61,7 @@ from zse.version import __version__
 # =============================================================================
 # App Lifecycle
 # =============================================================================
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -66,7 +81,7 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
-    
+
     app = FastAPI(
         title="ZSE API",
         description="Z Server Engine - Ultra memory-efficient LLM inference API",
@@ -75,7 +90,7 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         redoc_url="/redoc",
     )
-    
+
     # CORS for web UI
     app.add_middleware(
         CORSMiddleware,
@@ -84,10 +99,10 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
+
     # Add audit logging middleware (before routes, so it catches all requests)
     add_audit_middleware(app, enabled=True)
-    
+
     # Register routes
     _register_health_routes(app)
     _register_model_routes(app)
@@ -100,19 +115,19 @@ def create_app() -> FastAPI:
     _register_websocket_routes(app)
     _register_dashboard_routes(app)
     _register_audit_routes(app)
-    
+
     # Include chat API router
     app.include_router(chat_router)
-    
+
     # Include RAG API router
     app.include_router(rag_router)
-    
+
     # Include ZPF RAG API router
     app.include_router(zpf_router)
-    
+
     # Include MCP/Tools API router
     app.include_router(mcp_router)
-    
+
     return app
 
 
@@ -120,21 +135,23 @@ def create_app() -> FastAPI:
 # Health Routes
 # =============================================================================
 
+
 def _register_health_routes(app: FastAPI):
     """Register health check endpoints."""
-    
+
     @app.get("/health", response_model=HealthResponse, tags=["Health"])
     async def health_check():
         """Health check endpoint."""
         import torch
+
         return HealthResponse(
             status="healthy",
             version=__version__,
             uptime_seconds=server_state.uptime_seconds,
             models_loaded=server_state.model_count(),
-            gpu_available=torch.cuda.is_available()
+            gpu_available=torch.cuda.is_available(),
         )
-    
+
     @app.get("/", tags=["Health"])
     async def root():
         """Root endpoint - redirect to docs."""
@@ -142,17 +159,18 @@ def _register_health_routes(app: FastAPI):
             "name": "ZSE API",
             "version": __version__,
             "docs": "/docs",
-            "dashboard": "/dashboard"
+            "dashboard": "/dashboard",
         }
 
 
 # =============================================================================
-# Model Management Routes  
+# Model Management Routes
 # =============================================================================
+
 
 def _register_model_routes(app: FastAPI):
     """Register model management endpoints."""
-    
+
     @app.get("/v1/models", response_model=ModelListResponse, tags=["Models"])
     async def list_models():
         """List all available/loaded models (OpenAI-compatible)."""
@@ -164,20 +182,20 @@ def _register_model_routes(app: FastAPI):
                     id=m.model_id,
                     object="model",
                     created=int(m.load_time.timestamp()),
-                    owned_by="zse"
+                    owned_by="zse",
                 )
                 for m in models
-            ]
+            ],
         )
-    
+
     @app.post("/api/models/load", response_model=LoadModelResponse, tags=["Models"])
     async def load_model(request: LoadModelRequest):
         """Load a model into memory."""
         import torch
         from zse.engine.orchestrator import IntelligenceOrchestrator
-        
+
         start_time = time.time()
-        
+
         try:
             # Check if model already loaded
             existing = server_state.get_model_by_name(request.model_name)
@@ -189,52 +207,41 @@ def _register_model_routes(app: FastAPI):
                     quantization=existing.quantization,
                     vram_used_gb=existing.vram_used_gb,
                     load_time_sec=0,
-                    message="Model already loaded"
+                    message="Model already loaded",
                 )
-            
+
             # Create orchestrator based on quantization
             if request.quantization == "auto":
                 if request.target_vram_gb:
                     orch = IntelligenceOrchestrator.for_vram(
-                        request.target_vram_gb, 
-                        request.model_name,
-                        device=request.device
+                        request.target_vram_gb, request.model_name, device=request.device
                     )
                 else:
-                    orch = IntelligenceOrchestrator.auto(
-                        request.model_name,
-                        device=request.device
-                    )
+                    orch = IntelligenceOrchestrator.auto(request.model_name, device=request.device)
             elif request.quantization == "int4":
                 orch = IntelligenceOrchestrator.min_memory(
-                    request.model_name,
-                    device=request.device
+                    request.model_name, device=request.device
                 )
             elif request.quantization == "int8":
-                orch = IntelligenceOrchestrator.balanced(
-                    request.model_name,
-                    device=request.device
-                )
+                orch = IntelligenceOrchestrator.balanced(request.model_name, device=request.device)
             else:  # fp16
-                orch = IntelligenceOrchestrator.max_speed(
-                    request.model_name,
-                    device=request.device
-                )
-            
+                orch = IntelligenceOrchestrator.max_speed(request.model_name, device=request.device)
+
             # Load the model
             orch.load(verbose=True)
-            
+
             # Get memory usage
             if torch.cuda.is_available() and request.device != "cpu":
                 memory_used = torch.cuda.memory_allocated() / (1024**3)
             else:
                 # CPU mode: report from orchestrator config
                 import psutil
+
                 process = psutil.Process()
                 memory_used = process.memory_info().rss / (1024**3)  # RSS in GB
-            
+
             load_time = time.time() - start_time
-            
+
             # Register model
             model_id = server_state.generate_model_id(request.model_name)
             server_state.add_model(
@@ -242,9 +249,9 @@ def _register_model_routes(app: FastAPI):
                 model_name=request.model_name,
                 quantization=orch.quantization,
                 vram_used_gb=memory_used,
-                orchestrator=orch
+                orchestrator=orch,
             )
-            
+
             device_info = f" on {request.device.upper()}" if request.device == "cpu" else ""
             return LoadModelResponse(
                 success=True,
@@ -254,30 +261,30 @@ def _register_model_routes(app: FastAPI):
                 device=orch.device,
                 vram_used_gb=round(memory_used, 2),
                 load_time_sec=round(load_time, 2),
-                message=f"Model loaded successfully in {load_time:.1f}s{device_info}"
+                message=f"Model loaded successfully in {load_time:.1f}s{device_info}",
             )
-            
+
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     @app.post("/api/models/unload", tags=["Models"])
     async def unload_model(request: UnloadModelRequest):
         """Unload a model from memory."""
         import torch
         import gc
-        
+
         loaded = server_state.remove_model(request.model_id)
         if not loaded:
             raise HTTPException(status_code=404, detail=f"Model {request.model_id} not found")
-        
+
         # Cleanup
         if loaded.orchestrator:
             loaded.orchestrator.unload()
-        
+
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        
+
         return {"success": True, "message": f"Model {request.model_id} unloaded"}
 
 
@@ -285,29 +292,27 @@ def _register_model_routes(app: FastAPI):
 # API Key Management Routes
 # =============================================================================
 
+
 def _register_api_key_routes(app: FastAPI):
     """Register API key management endpoints."""
-    
+
     @app.get("/api/keys", tags=["API Keys"])
     async def list_api_keys():
         """List all API keys (without revealing actual keys)."""
         manager = get_key_manager()
-        return {
-            "enabled": manager.is_enabled(),
-            "keys": manager.list_keys()
-        }
-    
+        return {"enabled": manager.is_enabled(), "keys": manager.list_keys()}
+
     @app.post("/api/keys", tags=["API Keys"])
     async def create_api_key(request: dict):
         """Create a new API key."""
         name = request.get("name")
         if not name:
             raise HTTPException(status_code=400, detail="Key name is required")
-        
+
         manager = get_key_manager()
         key = manager.create_key(name)
         return {"success": True, "name": name, "key": key}
-    
+
     @app.delete("/api/keys/{name}", tags=["API Keys"])
     async def delete_api_key(name: str):
         """Delete an API key by name."""
@@ -315,7 +320,7 @@ def _register_api_key_routes(app: FastAPI):
         if manager.delete_key(name):
             return {"success": True, "message": f"Key '{name}' deleted"}
         raise HTTPException(status_code=404, detail=f"Key '{name}' not found")
-    
+
     @app.post("/api/keys/auth", tags=["API Keys"])
     async def toggle_auth(request: dict):
         """Enable or disable API key authentication."""
@@ -332,59 +337,75 @@ def _register_api_key_routes(app: FastAPI):
 # Batching Routes
 # =============================================================================
 
+
 def _register_batching_routes(app: FastAPI):
     """Register batching configuration endpoints."""
-    
+
     @app.get("/api/batching", tags=["Batching"])
     async def get_batching_status():
         """Get batching configuration and stats."""
         state = get_batching_state()
         return state.stats()
-    
+
     @app.post("/api/batching/enable", tags=["Batching"])
     async def enable_batching():
         """
         Enable request batching for high throughput.
-        
+
         When enabled, concurrent requests are automatically batched
         for 5-10x throughput improvement.
         """
         state = get_batching_state()
         state.enable()
-        return {"success": True, "enabled": True, "message": "Batching enabled - concurrent requests will be batched for higher throughput"}
-    
+        return {
+            "success": True,
+            "enabled": True,
+            "message": "Batching enabled - concurrent requests will be batched for higher throughput",
+        }
+
     @app.post("/api/batching/disable", tags=["Batching"])
     async def disable_batching():
         """Disable request batching (process sequentially)."""
         state = get_batching_state()
         state.disable()
-        return {"success": True, "enabled": False, "message": "Batching disabled - requests processed sequentially"}
+        return {
+            "success": True,
+            "enabled": False,
+            "message": "Batching disabled - requests processed sequentially",
+        }
 
 
 # =============================================================================
 # Model Registry & Discovery Routes
 # =============================================================================
 
+
 def _register_registry_routes(app: FastAPI):
     """Register model registry and discovery endpoints."""
-    
+
     from zse.models.registry import get_registry, ModelCategory, ModelSize
     from zse.models.discovery import get_discovery
-    
+
     @app.get("/api/models/registry", tags=["Model Registry"])
     async def list_registry(
-        category: Optional[str] = Query(None, description="Filter by category: chat, instruct, code, reasoning"),
-        size: Optional[str] = Query(None, description="Filter by size: tiny, small, medium, large, xlarge, xxl"),
-        max_vram: Optional[float] = Query(None, description="Max VRAM in GB (filters by INT8 requirement)"),
+        category: Optional[str] = Query(
+            None, description="Filter by category: chat, instruct, code, reasoning"
+        ),
+        size: Optional[str] = Query(
+            None, description="Filter by size: tiny, small, medium, large, xlarge, xxl"
+        ),
+        max_vram: Optional[float] = Query(
+            None, description="Max VRAM in GB (filters by INT8 requirement)"
+        ),
         recommended: bool = Query(False, description="Show only recommended models"),
     ):
         """
         List curated models from the ZSE registry.
-        
+
         Returns tested, known-compatible models with VRAM estimates and recommended settings.
         """
         registry = get_registry()
-        
+
         if recommended:
             models = registry.get_recommended(max_vram_gb=max_vram)
         elif max_vram:
@@ -394,7 +415,9 @@ def _register_registry_routes(app: FastAPI):
                 cat = ModelCategory(category.lower())
                 models = registry.filter_by_category(cat)
             except ValueError:
-                raise HTTPException(400, f"Invalid category. Valid: {[c.value for c in ModelCategory]}")
+                raise HTTPException(
+                    400, f"Invalid category. Valid: {[c.value for c in ModelCategory]}"
+                )
         elif size:
             try:
                 sz = ModelSize(size.lower())
@@ -403,12 +426,12 @@ def _register_registry_routes(app: FastAPI):
                 raise HTTPException(400, f"Invalid size. Valid: {[s.value for s in ModelSize]}")
         else:
             models = registry.list_all()
-        
+
         return {
             "count": len(models),
             "models": [m.to_dict() for m in models],
         }
-    
+
     @app.get("/api/models/registry/{model_id:path}", tags=["Model Registry"])
     async def get_registry_model(model_id: str):
         """Get detailed info for a specific model from the registry."""
@@ -417,7 +440,7 @@ def _register_registry_routes(app: FastAPI):
         if not model:
             raise HTTPException(404, f"Model '{model_id}' not in registry. Try /api/models/search")
         return model.to_dict()
-    
+
     @app.get("/api/models/search", tags=["Model Discovery"])
     async def search_huggingface(
         q: str = Query("", description="Search query"),
@@ -427,7 +450,7 @@ def _register_registry_routes(app: FastAPI):
     ):
         """
         Search HuggingFace Hub for compatible models.
-        
+
         Discovers models compatible with ZSE from HuggingFace.
         Use this to find new models not yet in the registry.
         """
@@ -449,12 +472,12 @@ def _register_registry_routes(app: FastAPI):
             raise HTTPException(500, f"Discovery requires httpx: pip install httpx")
         except Exception as e:
             raise HTTPException(500, f"Search failed: {str(e)}")
-    
+
     @app.get("/api/models/check/{model_id:path}", tags=["Model Discovery"])
     async def check_model_compatibility(model_id: str):
         """
         Check if a model is compatible with ZSE.
-        
+
         Fetches model info from HuggingFace and checks architecture,
         file formats, and estimates VRAM requirements.
         """
@@ -472,60 +495,62 @@ def _register_registry_routes(app: FastAPI):
 # Completion Routes (OpenAI-compatible)
 # =============================================================================
 
+
 def _register_completion_routes(app: FastAPI):
     """Register OpenAI-compatible completion endpoints."""
-    
+
     def _get_model(model_name: str) -> LoadedModel:
         """Get a loaded model or raise error."""
         model = server_state.get_model_by_name(model_name)
         if not model:
             raise HTTPException(
-                status_code=404, 
-                detail=f"Model '{model_name}' not loaded. Load it first with POST /api/models/load"
+                status_code=404,
+                detail=f"Model '{model_name}' not loaded. Load it first with POST /api/models/load",
             )
         return model
-    
+
     @app.post("/v1/chat/completions", tags=["Completions"])
     async def chat_completion(
-        request: ChatCompletionRequest,
-        api_key: Optional[APIKey] = Security(verify_api_key)
+        request: ChatCompletionRequest, api_key: Optional[APIKey] = Security(verify_api_key)
     ):
         """
         Create a chat completion (OpenAI-compatible).
-        
+
         Supports streaming with stream=true.
         Requires API key when authentication is enabled.
         When batching is enabled, concurrent requests are automatically batched.
         """
         # Check if batching is enabled for non-streaming
         batching_state = get_batching_state()
-        
+
         if not request.stream and batching_state.enabled:
             # Use batched completion
             return await batched_chat_completion(request, api_key)
-        
+
         request_id = server_state.generate_request_id()
         start_time = time.time()
-        
+
         try:
             model = _get_model(request.model)
             orch = model.orchestrator
-            
+
             # Build prompt from messages
             prompt = _build_chat_prompt(request.messages)
-            
+
             # Count prompt tokens (approximate)
             prompt_tokens = len(prompt.split()) * 1.3  # rough estimate
-            
+
             if request.stream:
                 # Streaming response (uses batching if enabled)
                 return StreamingResponse(
                     batched_stream_chat_completion(
                         request_id, request, model, prompt, int(prompt_tokens), start_time
-                    ) if batching_state.enabled else _stream_chat_completion(
+                    )
+                    if batching_state.enabled
+                    else _stream_chat_completion(
                         request_id, request, model, prompt, int(prompt_tokens), start_time
                     ),
-                    media_type="text/event-stream"
+                    media_type="text/event-stream",
                 )
             else:
                 # Non-streaming response - pass parameters directly
@@ -534,13 +559,13 @@ def _register_completion_routes(app: FastAPI):
                     prompt,
                     max_tokens=request.max_tokens,
                     temperature=request.temperature,
-                    top_p=request.top_p
+                    top_p=request.top_p,
                 ):
                     output_text += text
-                
+
                 completion_tokens = len(output_text.split())
                 latency_ms = (time.time() - start_time) * 1000
-                
+
                 # Record metrics
                 server_state.record_request(
                     request_id=request_id,
@@ -550,9 +575,9 @@ def _register_completion_routes(app: FastAPI):
                     completion_tokens=completion_tokens,
                     latency_ms=latency_ms,
                     status="success",
-                    user=request.user
+                    user=request.user,
                 )
-                
+
                 return ChatCompletionResponse(
                     id=request_id,
                     object="chat.completion",
@@ -562,16 +587,16 @@ def _register_completion_routes(app: FastAPI):
                         ChatCompletionChoice(
                             index=0,
                             message=ChatMessage(role="assistant", content=output_text),
-                            finish_reason="stop"
+                            finish_reason="stop",
                         )
                     ],
                     usage=UsageStats(
                         prompt_tokens=int(prompt_tokens),
                         completion_tokens=completion_tokens,
-                        total_tokens=int(prompt_tokens) + completion_tokens
-                    )
+                        total_tokens=int(prompt_tokens) + completion_tokens,
+                    ),
                 )
-                
+
         except HTTPException:
             raise
         except Exception as e:
@@ -584,37 +609,38 @@ def _register_completion_routes(app: FastAPI):
                 completion_tokens=0,
                 latency_ms=latency_ms,
                 status="error",
-                user=request.user
+                user=request.user,
             )
             raise HTTPException(status_code=500, detail=str(e))
-    
+
     @app.post("/v1/completions", tags=["Completions"])
     async def text_completion(
-        request: CompletionRequest,
-        api_key: Optional[APIKey] = Security(verify_api_key)
+        request: CompletionRequest, api_key: Optional[APIKey] = Security(verify_api_key)
     ):
         """Create a text completion (OpenAI-compatible). Requires API key when auth is enabled."""
         # Check if batching is enabled for non-streaming
         batching_state = get_batching_state()
-        
+
         if not request.stream and batching_state.enabled:
             return await batched_text_completion(request, api_key)
-        
+
         request_id = server_state.generate_request_id()
         start_time = time.time()
-        
+
         try:
             model = _get_model(request.model)
             orch = model.orchestrator
-            
+
             # Handle prompt (can be string or list)
             prompt = request.prompt if isinstance(request.prompt, str) else request.prompt[0]
             prompt_tokens = len(prompt.split())
-            
+
             if request.stream:
                 return StreamingResponse(
-                    _stream_completion(request_id, request, model, prompt, prompt_tokens, start_time),
-                    media_type="text/event-stream"
+                    _stream_completion(
+                        request_id, request, model, prompt, prompt_tokens, start_time
+                    ),
+                    media_type="text/event-stream",
                 )
             else:
                 output_text = ""
@@ -622,13 +648,13 @@ def _register_completion_routes(app: FastAPI):
                     prompt,
                     max_tokens=request.max_tokens,
                     temperature=request.temperature,
-                    top_p=request.top_p
+                    top_p=request.top_p,
                 ):
                     output_text += text
-                
+
                 completion_tokens = len(output_text.split())
                 latency_ms = (time.time() - start_time) * 1000
-                
+
                 server_state.record_request(
                     request_id=request_id,
                     model=request.model,
@@ -636,32 +662,26 @@ def _register_completion_routes(app: FastAPI):
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     latency_ms=latency_ms,
-                    status="success"
+                    status="success",
                 )
-                
+
                 # Prepend prompt if echo=True
                 if request.echo:
                     output_text = prompt + output_text
-                
+
                 return CompletionResponse(
                     id=request_id,
                     object="text_completion",
                     created=int(time.time()),
                     model=request.model,
-                    choices=[
-                        CompletionChoice(
-                            index=0,
-                            text=output_text,
-                            finish_reason="stop"
-                        )
-                    ],
+                    choices=[CompletionChoice(index=0, text=output_text, finish_reason="stop")],
                     usage=UsageStats(
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
-                        total_tokens=prompt_tokens + completion_tokens
-                    )
+                        total_tokens=prompt_tokens + completion_tokens,
+                    ),
                 )
-                
+
         except HTTPException:
             raise
         except Exception as e:
@@ -685,50 +705,42 @@ async def _stream_chat_completion(
     model: LoadedModel,
     prompt: str,
     prompt_tokens: int,
-    start_time: float
+    start_time: float,
 ) -> AsyncGenerator[str, None]:
     """Stream chat completion tokens."""
     orch = model.orchestrator
     completion_tokens = 0
-    
+
     try:
         for text_chunk in orch.generate(
             prompt,
             max_tokens=request.max_tokens,
             temperature=request.temperature,
-            top_p=request.top_p
+            top_p=request.top_p,
         ):
             completion_tokens += 1
-            
+
             chunk = ChatCompletionChunk(
                 id=request_id,
                 object="chat.completion.chunk",
                 created=int(time.time()),
                 model=request.model,
-                choices=[{
-                    "index": 0,
-                    "delta": {"content": text_chunk},
-                    "finish_reason": None
-                }]
+                choices=[{"index": 0, "delta": {"content": text_chunk}, "finish_reason": None}],
             )
             yield f"data: {chunk.model_dump_json()}\n\n"
             await asyncio.sleep(0)  # Allow other tasks
-        
+
         # Final chunk
         final_chunk = ChatCompletionChunk(
             id=request_id,
             object="chat.completion.chunk",
             created=int(time.time()),
             model=request.model,
-            choices=[{
-                "index": 0,
-                "delta": {},
-                "finish_reason": "stop"
-            }]
+            choices=[{"index": 0, "delta": {}, "finish_reason": "stop"}],
         )
         yield f"data: {final_chunk.model_dump_json()}\n\n"
         yield "data: [DONE]\n\n"
-        
+
         # Record metrics
         latency_ms = (time.time() - start_time) * 1000
         server_state.record_request(
@@ -739,9 +751,9 @@ async def _stream_chat_completion(
             completion_tokens=completion_tokens,
             latency_ms=latency_ms,
             status="success",
-            user=request.user
+            user=request.user,
         )
-        
+
     except Exception as e:
         error_data = {"error": str(e)}
         yield f"data: {json.dumps(error_data)}\n\n"
@@ -753,36 +765,29 @@ async def _stream_completion(
     model: LoadedModel,
     prompt: str,
     prompt_tokens: int,
-    start_time: float
+    start_time: float,
 ) -> AsyncGenerator[str, None]:
     """Stream text completion tokens."""
     orch = model.orchestrator
     completion_tokens = 0
-    
+
     for text_chunk in orch.generate(
-        prompt,
-        max_tokens=request.max_tokens,
-        temperature=request.temperature,
-        top_p=request.top_p
+        prompt, max_tokens=request.max_tokens, temperature=request.temperature, top_p=request.top_p
     ):
         completion_tokens += 1
-        
+
         data = {
             "id": request_id,
             "object": "text_completion",
             "created": int(time.time()),
             "model": request.model,
-            "choices": [{
-                "index": 0,
-                "text": text_chunk,
-                "finish_reason": None
-            }]
+            "choices": [{"index": 0, "text": text_chunk, "finish_reason": None}],
         }
         yield f"data: {json.dumps(data)}\n\n"
         await asyncio.sleep(0)
-    
+
     yield "data: [DONE]\n\n"
-    
+
     latency_ms = (time.time() - start_time) * 1000
     server_state.record_request(
         request_id=request_id,
@@ -791,7 +796,7 @@ async def _stream_completion(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         latency_ms=latency_ms,
-        status="success"
+        status="success",
     )
 
 
@@ -799,19 +804,20 @@ async def _stream_completion(
 # Monitoring Routes
 # =============================================================================
 
+
 def _register_monitoring_routes(app: FastAPI):
     """Register monitoring endpoints."""
-    
+
     @app.get("/api/stats", response_model=SystemStats, tags=["Monitoring"])
     async def get_system_stats():
         """Get system statistics (CPU, memory, GPU)."""
         return server_state.get_system_stats()
-    
+
     @app.get("/api/stats/gpu", tags=["Monitoring"])
     async def get_gpu_stats():
         """Get GPU statistics."""
         return {"gpus": server_state.get_gpu_stats()}
-    
+
     @app.get("/api/stats/models", tags=["Monitoring"])
     async def get_model_stats():
         """Get statistics for loaded models."""
@@ -825,7 +831,7 @@ def _register_monitoring_routes(app: FastAPI):
                     "vram_used_gb": m.vram_used_gb,
                     "load_time": m.load_time.isoformat(),
                     "request_count": m.request_count,
-                    "tokens_generated": m.tokens_generated
+                    "tokens_generated": m.tokens_generated,
                 }
                 for m in models
             ]
@@ -836,136 +842,124 @@ def _register_monitoring_routes(app: FastAPI):
 # Analytics Routes
 # =============================================================================
 
+
 def _register_analytics_routes(app: FastAPI):
     """Register analytics endpoints."""
-    
+
     @app.get("/api/analytics", response_model=AnalyticsOverview, tags=["Analytics"])
     async def get_analytics_overview():
         """Get analytics overview."""
         return server_state.get_analytics_overview()
-    
+
     @app.get("/api/analytics/timeseries", response_model=AnalyticsTimeSeries, tags=["Analytics"])
     async def get_analytics_timeseries():
         """Get time series analytics data (last 60 minutes)."""
         return server_state.get_analytics_timeseries()
-    
+
     @app.get("/api/analytics/requests", tags=["Analytics"])
-    async def get_recent_requests(
-        limit: int = Query(default=100, le=1000)
-    ):
+    async def get_recent_requests(limit: int = Query(default=100, le=1000)):
         """Get recent requests."""
         requests = server_state.get_recent_requests(limit)
-        return {
-            "requests": [r.model_dump() for r in requests]
-        }
+        return {"requests": [r.model_dump() for r in requests]}
 
 
 # =============================================================================
 # WebSocket Routes
 # =============================================================================
 
+
 def _register_websocket_routes(app: FastAPI):
     """Register WebSocket endpoints."""
-    
+
     @app.websocket("/ws/chat")
     async def websocket_chat(websocket: WebSocket):
         """
         WebSocket endpoint for real-time chat.
-        
+
         Send: {"model": "...", "messages": [...], "max_tokens": 512}
         Receive: {"type": "token", "content": "..."} or {"type": "done"}
         """
         await websocket.accept()
-        
+
         try:
             while True:
                 data = await websocket.receive_json()
-                
+
                 model_name = data.get("model")
                 messages = data.get("messages", [])
                 max_tokens = data.get("max_tokens", 512)
                 temperature = data.get("temperature", 0.7)
                 top_p = data.get("top_p", 0.9)
-                
+
                 model = server_state.get_model_by_name(model_name)
                 if not model:
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": f"Model '{model_name}' not loaded"
-                    })
+                    await websocket.send_json(
+                        {"type": "error", "message": f"Model '{model_name}' not loaded"}
+                    )
                     continue
-                
+
                 # Build prompt
-                prompt = _build_chat_prompt([
-                    ChatMessage(role=m["role"], content=m["content"])
-                    for m in messages
-                ])
-                
+                prompt = _build_chat_prompt(
+                    [ChatMessage(role=m["role"], content=m["content"]) for m in messages]
+                )
+
                 # Generate synchronously (simple approach)
                 start_time = time.time()
                 full_response = ""
                 total_tokens = 0
-                
+
                 try:
                     for text_chunk in model.orchestrator.generate(
-                        prompt,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        top_p=top_p
+                        prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p
                     ):
                         full_response += text_chunk
                         total_tokens += 1
-                        await websocket.send_json({
-                            "type": "token",
-                            "content": text_chunk
-                        })
-                    
+                        await websocket.send_json({"type": "token", "content": text_chunk})
+
                     latency = (time.time() - start_time) * 1000
-                    await websocket.send_json({
-                        "type": "done",
-                        "full_response": full_response,
-                        "tokens": total_tokens,
-                        "latency_ms": round(latency, 2)
-                    })
+                    await websocket.send_json(
+                        {
+                            "type": "done",
+                            "full_response": full_response,
+                            "tokens": total_tokens,
+                            "latency_ms": round(latency, 2),
+                        }
+                    )
                 except Exception as e:
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": str(e)
-                    })
-                
+                    await websocket.send_json({"type": "error", "message": str(e)})
+
         except WebSocketDisconnect:
             pass
         except Exception as e:
             try:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": f"Server error: {str(e)}"
-                })
+                await websocket.send_json({"type": "error", "message": f"Server error: {str(e)}"})
             except:
                 pass
-    
+
     @app.websocket("/ws/stats")
     async def websocket_stats(websocket: WebSocket):
         """
         WebSocket endpoint for real-time stats updates.
-        
+
         Sends system stats every 2 seconds.
         """
         await websocket.accept()
-        
+
         try:
             while True:
                 stats = server_state.get_system_stats()
                 analytics = server_state.get_analytics_overview()
-                
-                await websocket.send_json({
-                    "type": "stats",
-                    "system": stats.model_dump(),
-                    "analytics": analytics.model_dump()
-                })
-                
+
+                await websocket.send_json(
+                    {
+                        "type": "stats",
+                        "system": stats.model_dump(),
+                        "analytics": analytics.model_dump(),
+                    }
+                )
+
                 await asyncio.sleep(2)
-                
+
         except WebSocketDisconnect:
             pass
 
@@ -974,24 +968,26 @@ def _register_websocket_routes(app: FastAPI):
 # Dashboard Routes
 # =============================================================================
 
+
 def _register_dashboard_routes(app: FastAPI):
     """Register web dashboard routes."""
-    
+
     @app.get("/dashboard", response_class=HTMLResponse, tags=["Dashboard"])
     async def dashboard():
         """Serve the monitoring dashboard."""
         return _get_dashboard_html()
-    
+
     @app.get("/chat", response_class=HTMLResponse, tags=["Dashboard"])
     async def enhanced_playground():
         """Serve the enhanced chat playground."""
         from zse.api.server.playground_ui import get_enhanced_playground_html
+
         return get_enhanced_playground_html()
 
 
 def _get_dashboard_html() -> str:
     """Generate dashboard HTML."""
-    return '''<!DOCTYPE html>
+    return """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -2748,23 +2744,24 @@ curl -X POST http://localhost:8000/api/models/unload \
         connectStats();
     </script>
 </body>
-</html>'''
+</html>"""
 
 
 # =============================================================================
 # Audit Routes
 # =============================================================================
 
+
 def _register_audit_routes(app: FastAPI):
     """Register audit logging endpoints."""
-    
+
     @app.get("/api/audit/summary", tags=["Audit"])
     async def get_audit_summary(
-        hours: int = Query(default=24, ge=1, le=720, description="Hours to look back")
+        hours: int = Query(default=24, ge=1, le=720, description="Hours to look back"),
     ):
         """
         Get audit log summary for the specified time period.
-        
+
         Returns aggregated statistics including:
         - Total requests
         - Unique API keys
@@ -2774,19 +2771,16 @@ def _register_audit_routes(app: FastAPI):
         """
         logger = get_audit_logger()
         return logger.get_summary(hours=hours, include_rotated=True)
-    
+
     @app.get("/api/audit/recent", tags=["Audit"])
     async def get_recent_audit_logs(
-        limit: int = Query(default=50, ge=1, le=500, description="Number of entries")
+        limit: int = Query(default=50, ge=1, le=500, description="Number of entries"),
     ):
         """Get recent audit log entries from memory buffer."""
         logger = get_audit_logger()
         entries = logger.get_recent(limit)
-        return {
-            "count": len(entries),
-            "entries": [e.to_dict() for e in entries]
-        }
-    
+        return {"count": len(entries), "entries": [e.to_dict() for e in entries]}
+
     @app.get("/api/audit/query", tags=["Audit"])
     async def query_audit_logs(
         hours: Optional[int] = Query(default=None, description="Hours to look back"),
@@ -2799,15 +2793,15 @@ def _register_audit_routes(app: FastAPI):
     ):
         """
         Query audit logs with filters.
-        
+
         Searches both current and rotated log files.
         """
         from datetime import datetime, timedelta
-        
+
         logger = get_audit_logger()
         start_time = datetime.now() - timedelta(hours=hours) if hours else None
         status_codes = [status] if status else None
-        
+
         entries = logger.query(
             start_time=start_time,
             api_key_name=api_key,
@@ -2818,25 +2812,22 @@ def _register_audit_routes(app: FastAPI):
             limit=limit,
             include_rotated=True,
         )
-        
-        return {
-            "count": len(entries),
-            "entries": entries
-        }
-    
+
+        return {"count": len(entries), "entries": entries}
+
     @app.get("/api/audit/stats", tags=["Audit"])
     async def get_audit_stats():
         """Get audit logging system statistics."""
         logger = get_audit_logger()
         return logger.get_stats()
-    
+
     @app.delete("/api/audit/clear", tags=["Audit"])
     async def clear_audit_logs(
-        all_logs: bool = Query(default=False, description="Clear rotated logs too")
+        all_logs: bool = Query(default=False, description="Clear rotated logs too"),
     ):
         """
         Clear audit logs.
-        
+
         WARNING: This permanently deletes log data.
         """
         logger = get_audit_logger()
@@ -2852,21 +2843,12 @@ app = create_app()
 # CLI Entry Point
 # =============================================================================
 
-def run_server(
-    host: str = "0.0.0.0",
-    port: int = 8000,
-    reload: bool = False,
-    workers: int = 1
-):
+
+def run_server(host: str = "0.0.0.0", port: int = 8000, reload: bool = False, workers: int = 1):
     """Run the API server."""
     import uvicorn
-    uvicorn.run(
-        "zse.api.server.app:app",
-        host=host,
-        port=port,
-        reload=reload,
-        workers=workers
-    )
+
+    uvicorn.run("zse.api.server.app:app", host=host, port=port, reload=reload, workers=workers)
 
 
 if __name__ == "__main__":

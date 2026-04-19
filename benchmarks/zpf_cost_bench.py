@@ -211,7 +211,6 @@ QA_PAIRS = [
         "question": "What is a receptive field?",
         "answer_fragments": ["region of the input"],
     },
-
     # === Group B: Lists ===
     {
         "id": 4,
@@ -226,7 +225,6 @@ QA_PAIRS = [
         "question": "What techniques are used in CNN training?",
         "answer_fragments": ["augmentation", "batch normalization", "transfer learning"],
     },
-
     # === Group C: Noise-adjacent ===
     {
         "id": 6,
@@ -246,7 +244,6 @@ QA_PAIRS = [
         "question": "What is transfer learning in the context of CNNs?",
         "answer_fragments": ["fine-tuned"],
     },
-
     # === Group D: Cross-section ===
     {
         "id": 9,
@@ -266,6 +263,7 @@ QA_PAIRS = [
 # ============================================================================
 # Plain fixed-size chunker baseline
 # ============================================================================
+
 
 class PlainChunker:
     def __init__(self, chunk_size_chars: int = 512, overlap_chars: int = 50):
@@ -337,6 +335,7 @@ class PlainVectorSearch:
 # Scoring
 # ============================================================================
 
+
 def score_answer(context: str, answer_fragments: List[str]) -> Tuple[str, int, int]:
     """Returns (verdict, found_count, total_count)."""
     ctx_lower = context.lower()
@@ -358,6 +357,7 @@ def count_tokens(text: str) -> int:
 # ============================================================================
 # Main benchmark
 # ============================================================================
+
 
 def run_cost_benchmark():
     print("=" * 80)
@@ -400,10 +400,7 @@ def run_cost_benchmark():
         print()
 
         # Show what ZPF compressed to
-        zpf_total_stored = sum(
-            len(entry["content"])
-            for entry in zpf_pipeline._store._index
-        )
+        zpf_total_stored = sum(len(entry["content"]) for entry in zpf_pipeline._store._index)
         zpf_stored_tokens = zpf_total_stored // 4
         plain_total_stored = sum(len(c) for c in plain_search.chunks)
         plain_stored_tokens = plain_total_stored // 4
@@ -453,12 +450,8 @@ def run_cost_benchmark():
                 current_group = group
 
             # Retrieve context from both systems
-            zpf_ctx = zpf_pipeline.get_context(
-                question, max_tokens=MAX_TOKENS, top_k=TOP_K
-            )
-            plain_ctx = plain_search.get_context(
-                question, max_tokens=MAX_TOKENS, top_k=TOP_K
-            )
+            zpf_ctx = zpf_pipeline.get_context(question, max_tokens=MAX_TOKENS, top_k=TOP_K)
+            plain_ctx = plain_search.get_context(question, max_tokens=MAX_TOKENS, top_k=TOP_K)
 
             # Count tokens actually sent
             zpf_tok = count_tokens(zpf_ctx)
@@ -479,8 +472,12 @@ def run_cost_benchmark():
             elif plain_verdict == "PART":
                 plain_partial += 1
 
-            zpf_mark = {"HIT": "  \u2705", "PART": "  \u26a0\ufe0f", "MISS": "  \u274c"}[zpf_verdict]
-            plain_mark = {"HIT": "   \u2705", "PART": "   \u26a0\ufe0f", "MISS": "   \u274c"}[plain_verdict]
+            zpf_mark = {"HIT": "  \u2705", "PART": "  \u26a0\ufe0f", "MISS": "  \u274c"}[
+                zpf_verdict
+            ]
+            plain_mark = {"HIT": "   \u2705", "PART": "   \u26a0\ufe0f", "MISS": "   \u274c"}[
+                plain_verdict
+            ]
 
             q_short = question[:40] + ".." if len(question) > 42 else question
             print(
@@ -488,15 +485,17 @@ def run_cost_benchmark():
                 f"{zpf_tok:>7}  {zpf_mark} {plain_tok:>9}  {plain_mark}"
             )
 
-            per_query_results.append({
-                "id": qid,
-                "group": group,
-                "question": question,
-                "zpf_tokens": zpf_tok,
-                "zpf_verdict": zpf_verdict,
-                "plain_tokens": plain_tok,
-                "plain_verdict": plain_verdict,
-            })
+            per_query_results.append(
+                {
+                    "id": qid,
+                    "group": group,
+                    "question": question,
+                    "zpf_tokens": zpf_tok,
+                    "zpf_verdict": zpf_verdict,
+                    "plain_tokens": plain_tok,
+                    "plain_verdict": plain_verdict,
+                }
+            )
 
         # === Summary ===
         print()
@@ -506,10 +505,12 @@ def run_cost_benchmark():
         print()
 
         print(f"  {'Metric':<35} {'ZPF':>12} {'Plain':>12} {'Delta':>10}")
-        print(f"  {'-'*69}")
+        print(f"  {'-' * 69}")
         print(f"  {'Correct answers (HIT)':<35} {zpf_correct:>8}/10   {plain_correct:>8}/10")
         print(f"  {'Partial answers':<35} {zpf_partial:>8}/10   {plain_partial:>8}/10")
-        print(f"  {'Total tokens sent (10 queries)':<35} {total_zpf_tokens:>8,}   {total_plain_tokens:>8,}")
+        print(
+            f"  {'Total tokens sent (10 queries)':<35} {total_zpf_tokens:>8,}   {total_plain_tokens:>8,}"
+        )
 
         if total_plain_tokens > 0:
             token_reduction = (1 - total_zpf_tokens / total_plain_tokens) * 100
@@ -517,7 +518,9 @@ def run_cost_benchmark():
         print()
 
         # Per-query token comparison
-        print(f"  {'Tokens per query (avg)':<35} {total_zpf_tokens/10:>8.0f}   {total_plain_tokens/10:>8.0f}")
+        print(
+            f"  {'Tokens per query (avg)':<35} {total_zpf_tokens / 10:>8.0f}   {total_plain_tokens / 10:>8.0f}"
+        )
         print()
 
         # Cost projection
@@ -553,7 +556,9 @@ def run_cost_benchmark():
             print(f"     Token reduction: {token_reduction:.1f}%")
         elif total_zpf_tokens < total_plain_tokens:
             quality_diff = plain_correct - zpf_correct
-            print(f"  \u26a0\ufe0f  ZPF TRADES: {token_reduction:.1f}% fewer tokens but loses {quality_diff} answer(s).")
+            print(
+                f"  \u26a0\ufe0f  ZPF TRADES: {token_reduction:.1f}% fewer tokens but loses {quality_diff} answer(s)."
+            )
             print(f"     {zpf_correct}/10 correct at {total_zpf_tokens:,} tokens")
             print(f"     vs {plain_correct}/10 correct at {total_plain_tokens:,} tokens")
         else:

@@ -7,10 +7,10 @@ Handles model loading and architecture implementations:
 
 Usage:
     from zse.models import LlamaModel, ModelLoader
-    
+
     # Load from HuggingFace
     model = LlamaModel.from_pretrained("meta-llama/Llama-3.2-1B")
-    
+
     # Or use manual loading
     loader = ModelLoader()
     info = loader.load_model_info("path/to/model")
@@ -42,13 +42,14 @@ def get_model_architecture(model_type: str):
 
 
 # Registry and Discovery
-from .registry import (
-    ModelRegistry, ModelSpec, ModelCategory, ModelSize,
-    get_registry, REGISTRY
-)
+from .registry import ModelRegistry, ModelSpec, ModelCategory, ModelSize, get_registry, REGISTRY
 from .discovery import (
-    ModelDiscovery, HFModelInfo, SUPPORTED_ARCHITECTURES,
-    get_discovery, search_models, check_model
+    ModelDiscovery,
+    HFModelInfo,
+    SUPPORTED_ARCHITECTURES,
+    get_discovery,
+    search_models,
+    check_model,
 )
 
 
@@ -63,21 +64,18 @@ __all__ = [
     "HuggingFaceLoader",
     "ModelHub",
     "ModelLoader",
-    
     # Base classes
     "ModelConfig",
     "BaseModel",
     "RMSNorm",
-    
     # Models
     "LlamaModel",
     "LlamaConfig",
     "MistralModel",
     "MistralConfig",
-    
     # Registry & Discovery
     "ModelRegistry",
-    "ModelSpec", 
+    "ModelSpec",
     "ModelCategory",
     "ModelSize",
     "get_registry",
@@ -87,7 +85,7 @@ __all__ = [
     "SUPPORTED_ARCHITECTURES",
     "get_discovery",
     "search_models",
-    "check_model",    
+    "check_model",
     # Utilities
     "get_model_architecture",
 ]

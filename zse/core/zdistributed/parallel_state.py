@@ -12,7 +12,7 @@ Usage:
         get_tp_world_size,
         destroy_tensor_parallel,
     )
-    
+
     init_tensor_parallel(tp_size=4)
     rank = get_tp_rank()       # 0, 1, 2, or 3
     world = get_tp_world_size() # 4
@@ -56,10 +56,10 @@ def init_tensor_parallel(
 ) -> None:
     """
     Initialize tensor parallel process group.
-    
+
     For single-node multi-GPU, this is called once per process.
     Each GPU runs as a separate process with a unique rank.
-    
+
     Args:
         tp_size: Number of GPUs for tensor parallelism
         rank: This process's rank (auto-detected from env if None)
@@ -68,37 +68,37 @@ def init_tensor_parallel(
         master_port: Port for rendezvous
     """
     global _TP_GROUP, _TP_RANK, _TP_WORLD_SIZE, _INITIALIZED
-    
+
     if _INITIALIZED:
         return
-    
+
     if tp_size <= 1:
         _TP_RANK = 0
         _TP_WORLD_SIZE = 1
         _INITIALIZED = True
         return
-    
+
     # Set env vars for torch.distributed
     if rank is None:
         rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", "0")))
-    
+
     os.environ.setdefault("MASTER_ADDR", master_addr)
     os.environ.setdefault("MASTER_PORT", master_port)
-    
+
     if not dist.is_initialized():
         dist.init_process_group(
             backend=backend,
             world_size=tp_size,
             rank=rank,
         )
-    
+
     # Create TP group with all ranks
     tp_ranks = list(range(tp_size))
     _TP_GROUP = dist.new_group(tp_ranks)
     _TP_RANK = rank
     _TP_WORLD_SIZE = tp_size
     _INITIALIZED = True
-    
+
     # Bind this process to its GPU
     torch.cuda.set_device(rank)
 
@@ -106,10 +106,10 @@ def init_tensor_parallel(
 def destroy_tensor_parallel() -> None:
     """Clean up distributed state."""
     global _TP_GROUP, _TP_RANK, _TP_WORLD_SIZE, _INITIALIZED
-    
+
     if dist.is_initialized():
         dist.destroy_process_group()
-    
+
     _TP_GROUP = None
     _TP_RANK = 0
     _TP_WORLD_SIZE = 1
@@ -119,16 +119,16 @@ def destroy_tensor_parallel() -> None:
 def init_single_process_tp(tp_size: int) -> None:
     """
     Initialize TP state for single-process multi-GPU (no spawning).
-    
+
     This is used when the orchestrator manages all GPUs from one process
     (e.g., for serving). Communication uses direct CUDA operations instead
     of NCCL process groups.
-    
+
     Args:
         tp_size: Number of GPUs to use
     """
     global _TP_RANK, _TP_WORLD_SIZE, _INITIALIZED
-    
+
     _TP_RANK = 0  # Single process is always rank 0
     _TP_WORLD_SIZE = tp_size
     _INITIALIZED = True

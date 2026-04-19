@@ -61,15 +61,17 @@ from zse.core.zdistributed.pipeline_parallel import (
 # Grid helpers
 # -----------------------------------------------------------------------
 
+
 @dataclass
 class GridPosition:
     """A worker's position in the 2-D grid."""
-    global_rank: int    # 0 … (tp_size*pp_size - 1)
-    pp_rank: int        # pipeline stage index
-    tp_rank: int        # tensor-parallel rank within the stage
+
+    global_rank: int  # 0 … (tp_size*pp_size - 1)
+    pp_rank: int  # pipeline stage index
+    tp_rank: int  # tensor-parallel rank within the stage
     pp_size: int
     tp_size: int
-    device: str         # e.g. "cuda:2"
+    device: str  # e.g. "cuda:2"
 
     @property
     def is_first_stage(self) -> bool:
@@ -112,6 +114,7 @@ def _grid_pos(global_rank: int, tp_size: int, pp_size: int) -> GridPosition:
 # Worker entry point
 # -----------------------------------------------------------------------
 
+
 def _tppp_worker_main(
     rank: int,
     world_size: int,
@@ -141,8 +144,7 @@ def _tppp_worker_main(
         # ---------- init global process group ----------
         dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
         print(
-            f"[TP-PP {rank}] pp={pos.pp_rank} tp={pos.tp_rank} "
-            f"device={pos.device}  group_init=OK",
+            f"[TP-PP {rank}] pp={pos.pp_rank} tp={pos.tp_rank} device={pos.device}  group_init=OK",
             flush=True,
         )
 
@@ -155,7 +157,9 @@ def _tppp_worker_main(
 
         # ---------- load model stage + apply TP sharding ----------
         stage_model, tokenizer, stage_info = _load_tppp_stage(
-            model_path, pos, my_tp_group,
+            model_path,
+            pos,
+            my_tp_group,
         )
         vram_mb = torch.cuda.memory_allocated(rank) / 1024**2
         print(
@@ -180,8 +184,13 @@ def _tppp_worker_main(
             try:
                 if cmd["action"] == "generate":
                     _tppp_generate_loop(
-                        pos, stage_model, tokenizer, stage_info,
-                        my_tp_group, cmd, output_queue,
+                        pos,
+                        stage_model,
+                        tokenizer,
+                        stage_info,
+                        my_tp_group,
+                        cmd,
+                        output_queue,
                     )
             except Exception as e:
                 tb = traceback.format_exc()
@@ -194,8 +203,7 @@ def _tppp_worker_main(
         tb = traceback.format_exc()
         print(f"[TP-PP {rank}] FATAL: {e}\n{tb}", flush=True)
         try:
-            output_queue.put({"status": "error", "rank": rank,
-                              "error": str(e), "traceback": tb})
+            output_queue.put({"status": "error", "rank": rank, "error": str(e), "traceback": tb})
         except Exception:
             pass
         try:
@@ -214,6 +222,7 @@ def _tppp_worker_main(
 # Model loading  (PP stage extraction + TP sharding)
 # -----------------------------------------------------------------------
 
+
 def _load_tppp_stage(
     model_path: str,
     pos: GridPosition,
@@ -230,14 +239,15 @@ def _load_tppp_stage(
 
     # --- load full model ---
     if model_p.exists() and (
-        model_p.suffix == ".zse"
-        or (model_p.is_dir() and (model_p / "model.zse").exists())
+        model_p.suffix == ".zse" or (model_p.is_dir() and (model_p / "model.zse").exists())
     ):
         from zse.format.reader_v2 import load_zse_model
+
         zse_file = model_p if model_p.suffix == ".zse" else model_p / "model.zse"
         full_model, tokenizer, _ = load_zse_model(str(zse_file), device=device)
     else:
         from transformers import AutoModelForCausalLM, AutoTokenizer
+
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
         full_model = AutoModelForCausalLM.from_pretrained(
             model_path,
@@ -266,8 +276,10 @@ def _load_tppp_stage(
     if rotary_emb is not None:
         try:
             from transformers.models.qwen2.modeling_qwen2 import Qwen2RotaryEmbedding
+
             stage_model["rotary_emb"] = Qwen2RotaryEmbedding(
-                full_model.config, device=device,
+                full_model.config,
+                device=device,
             )
         except Exception:
             try:
@@ -286,6 +298,7 @@ def _load_tppp_stage(
 
     # --- apply TP sharding to the extracted layers ---
     from zse.core.zdistributed.tensor_parallel import TensorParallel
+
     tp = TensorParallel(
         tp_size=pos.tp_size,
         tp_rank=pos.tp_rank,
@@ -341,6 +354,7 @@ def _load_tppp_stage(
 # -----------------------------------------------------------------------
 # Generation loop  (TP-PP aware)
 # -----------------------------------------------------------------------
+
 
 def _tppp_generate_loop(
     pos: GridPosition,
@@ -398,21 +412,26 @@ def _tppp_generate_loop(
 
         # KV cache
         from transformers import DynamicCache
+
         kv_cache = DynamicCache(config=config)
 
         # ===== PREFILL =====
         if pos.is_first_stage:
             hidden = stage_model["embed_tokens"](input_ids)
         else:
-            hidden = torch.empty(batch_size, prompt_len, hidden_size,
-                                 dtype=torch.float16, device=device)
+            hidden = torch.empty(
+                batch_size, prompt_len, hidden_size, dtype=torch.float16, device=device
+            )
             # TP-rank 0 receives from previous stage, then broadcasts within TP group
             if pos.is_tp_root:
                 dist.recv(hidden, src=pos.prev_stage_tp_root)
             dist.broadcast(hidden, src=pos.pp_rank * pos.tp_size, group=tp_group)
 
         if pos.is_tp_root:
-            print(f"[TP-PP {pos.global_rank}] prefill: embed/recv done, running {len(stage_model['layers'])} layers", flush=True)
+            print(
+                f"[TP-PP {pos.global_rank}] prefill: embed/recv done, running {len(stage_model['layers'])} layers",
+                flush=True,
+            )
 
         cache_position = torch.arange(prompt_len, device=device)
         position_ids = cache_position.unsqueeze(0).expand(batch_size, -1)
@@ -433,12 +452,17 @@ def _tppp_generate_loop(
             logits = stage_model["lm_head"](normed)
             next_logits = logits[:, -1, :]
             if pos.is_tp_root:
-                print(f"[TP-PP {pos.global_rank}] prefill done, first token logits ready", flush=True)
+                print(
+                    f"[TP-PP {pos.global_rank}] prefill done, first token logits ready", flush=True
+                )
         else:
             # TP-rank 0 sends hidden to next stage
             if pos.is_tp_root:
                 dist.send(hidden.contiguous(), dst=pos.next_stage_tp_root)
-                print(f"[TP-PP {pos.global_rank}] prefill done, hidden sent to stage {pos.pp_rank+1}", flush=True)
+                print(
+                    f"[TP-PP {pos.global_rank}] prefill done, hidden sent to stage {pos.pp_rank + 1}",
+                    flush=True,
+                )
 
         # ===== DECODE =====
         generated_tokens: List[torch.Tensor] = []
@@ -462,7 +486,9 @@ def _tppp_generate_loop(
 
                 # Check EOS
                 if eos_token_id is not None and (next_token == eos_token_id).all():
-                    stop = torch.tensor([[-1]], dtype=torch.long, device=device).expand(batch_size, 1)
+                    stop = torch.tensor([[-1]], dtype=torch.long, device=device).expand(
+                        batch_size, 1
+                    )
                     dist.broadcast(stop, src=last_stage_tp0)
                     generated_tokens.append(next_token)
                     break
@@ -470,7 +496,9 @@ def _tppp_generate_loop(
                 dist.broadcast(next_token, src=last_stage_tp0)
                 generated_tokens.append(next_token)
                 if step % 10 == 0:
-                    print(f"[TP-PP {pos.global_rank}] decode step {step}/{max_new_tokens}", flush=True)
+                    print(
+                        f"[TP-PP {pos.global_rank}] decode step {step}/{max_new_tokens}", flush=True
+                    )
             else:
                 next_token = torch.empty(batch_size, 1, dtype=torch.long, device=device)
                 dist.broadcast(next_token, src=last_stage_tp0)
@@ -485,8 +513,7 @@ def _tppp_generate_loop(
             if pos.is_first_stage:
                 hidden = stage_model["embed_tokens"](next_token)
             else:
-                hidden = torch.empty(batch_size, 1, hidden_size,
-                                     dtype=torch.float16, device=device)
+                hidden = torch.empty(batch_size, 1, hidden_size, dtype=torch.float16, device=device)
                 if pos.is_tp_root:
                     dist.recv(hidden, src=pos.prev_stage_tp_root)
                 dist.broadcast(hidden, src=pos.pp_rank * pos.tp_size, group=tp_group)
@@ -522,6 +549,7 @@ def _tppp_generate_loop(
 # -----------------------------------------------------------------------
 # Coordinator  (main process)
 # -----------------------------------------------------------------------
+
 
 class TPPPCoordinator:
     """

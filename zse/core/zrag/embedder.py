@@ -38,6 +38,7 @@ class Embedder:
         if model_name:
             try:
                 from sentence_transformers import SentenceTransformer
+
                 self._model = SentenceTransformer(model_name)
                 self._use_st = True
                 self.dimension = self._model.get_sentence_embedding_dimension()
@@ -47,6 +48,7 @@ class Embedder:
                 self._use_st = False
                 self.model_name = "tfidf-fallback"
                 import warnings
+
                 warnings.warn(
                     f"sentence-transformers not available — falling back to TF-IDF embeddings. "
                     f"TF-IDF embeddings are NOT compatible with neural embeddings. "
@@ -97,7 +99,7 @@ class Embedder:
             tokenized.append(words)
             all_words.update(words)
 
-        vocab = sorted(all_words)[:self.dimension]
+        vocab = sorted(all_words)[: self.dimension]
         word_to_idx = {w: i for i, w in enumerate(vocab)}
 
         embeddings = np.zeros((len(texts), self.dimension), dtype=np.float32)
@@ -119,14 +121,65 @@ class Embedder:
 
         return embeddings
 
-    _STOPWORDS = frozenset({
-        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-        "have", "has", "had", "do", "does", "did", "will", "would", "could",
-        "should", "may", "might", "must", "shall", "can", "of", "to", "in",
-        "for", "on", "with", "at", "by", "from", "as", "or", "and", "but",
-        "if", "than", "so", "no", "not", "only", "own", "same", "too",
-        "very", "just", "this", "that", "these", "those", "it", "its",
-    })
+    _STOPWORDS = frozenset(
+        {
+            "the",
+            "a",
+            "an",
+            "is",
+            "are",
+            "was",
+            "were",
+            "be",
+            "been",
+            "being",
+            "have",
+            "has",
+            "had",
+            "do",
+            "does",
+            "did",
+            "will",
+            "would",
+            "could",
+            "should",
+            "may",
+            "might",
+            "must",
+            "shall",
+            "can",
+            "of",
+            "to",
+            "in",
+            "for",
+            "on",
+            "with",
+            "at",
+            "by",
+            "from",
+            "as",
+            "or",
+            "and",
+            "but",
+            "if",
+            "than",
+            "so",
+            "no",
+            "not",
+            "only",
+            "own",
+            "same",
+            "too",
+            "very",
+            "just",
+            "this",
+            "that",
+            "these",
+            "those",
+            "it",
+            "its",
+        }
+    )
 
     def _tokenize(self, text: str) -> List[str]:
         words = re.findall(r"\b\w+\b", text.lower())

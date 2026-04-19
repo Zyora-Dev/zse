@@ -496,27 +496,31 @@ def run_benchmark():
 
             token_reduction = (1 - zpf_tokens / raw_tokens) * 100 if raw_tokens > 0 else 0
 
-            results.append({
-                "label": label,
-                "raw_bytes": raw_bytes,
-                "raw_tokens": raw_tokens,
-                "zpf_tokens": zpf_tokens,
-                "zpf_bytes": zpf_bytes,
-                "blocks": block_count,
-                "noise_lines": len(noise_lines),
-                "noise_chars": noise_chars,
-                "token_reduction": token_reduction,
-                "time_ms": convert_time * 1000,
-            })
+            results.append(
+                {
+                    "label": label,
+                    "raw_bytes": raw_bytes,
+                    "raw_tokens": raw_tokens,
+                    "zpf_tokens": zpf_tokens,
+                    "zpf_bytes": zpf_bytes,
+                    "blocks": block_count,
+                    "noise_lines": len(noise_lines),
+                    "noise_chars": noise_chars,
+                    "token_reduction": token_reduction,
+                    "time_ms": convert_time * 1000,
+                }
+            )
 
-            print(f"{'='*75}")
+            print(f"{'=' * 75}")
             print(f"  {label}")
-            print(f"{'='*75}")
+            print(f"{'=' * 75}")
             print(f"  Original:       {raw_bytes:>8,} bytes | {raw_tokens:>6,} tokens")
-            print(f"  .zpf output:    {zpf_bytes:>8,} bytes | {zpf_tokens:>6,} tokens | {block_count} blocks")
+            print(
+                f"  .zpf output:    {zpf_bytes:>8,} bytes | {zpf_tokens:>6,} tokens | {block_count} blocks"
+            )
             print(f"  Noise stripped:  {len(noise_lines)} lines ({noise_chars:,} chars)")
             print(f"  Token savings:   {token_reduction:.1f}% vs raw")
-            print(f"  Convert time:    {convert_time*1000:.0f}ms")
+            print(f"  Convert time:    {convert_time * 1000:.0f}ms")
             print()
 
             # Show what noise was stripped
@@ -531,6 +535,7 @@ def run_benchmark():
             # Show block types
             blocks = reader.read_all_blocks()
             from zse.core.zrag.zpf_spec import BlockType
+
             type_counts = {}
             for b in blocks:
                 name = BlockType(b.block_type).name
@@ -556,7 +561,9 @@ def run_benchmark():
         avg = sum(r["token_reduction"] for r in results) / len(results)
         print(f"{'AVERAGE':<42} {'':>7} {'':>7} {'':>7} {'':>7} {avg:>6.1f}%")
         print()
-        print(f"Embedding: {pipeline.stats['embedding_model']} ({pipeline.stats['embedding_dim']}d)")
+        print(
+            f"Embedding: {pipeline.stats['embedding_model']} ({pipeline.stats['embedding_dim']}d)"
+        )
         print()
 
         # Validation checks

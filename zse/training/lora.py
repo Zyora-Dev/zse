@@ -29,39 +29,46 @@ import torch.nn.functional as F
 @dataclass
 class LoRAConfig:
     """Configuration for LoRA adapters."""
-    
+
     # Core LoRA parameters
     rank: int = 64
     """Rank of the low-rank decomposition. Higher = more capacity, more VRAM."""
-    
+
     alpha: int = 128
     """Scaling factor. Effective scaling is alpha/rank."""
-    
+
     dropout: float = 0.05
     """Dropout probability for LoRA layers."""
-    
+
     # Target modules
-    target_modules: List[str] = field(default_factory=lambda: [
-        "q_proj", "k_proj", "v_proj", "o_proj",  # Attention
-        "gate_proj", "up_proj", "down_proj",      # MLP
-    ])
+    target_modules: List[str] = field(
+        default_factory=lambda: [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",  # Attention
+            "gate_proj",
+            "up_proj",
+            "down_proj",  # MLP
+        ]
+    )
     """Which modules to apply LoRA to."""
-    
+
     # Advanced options
     bias: str = "none"
     """Bias training: 'none', 'all', or 'lora_only'."""
-    
+
     modules_to_save: List[str] = field(default_factory=list)
     """Additional modules to save (fully trained, not LoRA)."""
-    
+
     # Initialization
     init_lora_weights: bool = True
     """Whether to initialize A with Kaiming and B with zeros."""
-    
+
     # Use RSLoRA scaling (rank-stabilized)
     use_rslora: bool = False
     """Use rank-stabilized LoRA scaling (alpha/sqrt(rank) instead of alpha/rank)."""
-    
+
     def __post_init__(self):
         if self.rank <= 0:
             raise ValueError(f"LoRA rank must be positive, got {self.rank}")
@@ -69,7 +76,7 @@ class LoRAConfig:
             raise ValueError(f"LoRA alpha must be positive, got {self.alpha}")
         if not 0 <= self.dropout < 1:
             raise ValueError(f"Dropout must be in [0, 1), got {self.dropout}")
-    
+
     @property
     def scaling(self) -> float:
         """Get the LoRA scaling factor."""
@@ -81,11 +88,11 @@ class LoRAConfig:
 class LoRALinear(nn.Module):
     """
     Linear layer with LoRA adaptation.
-    
+
     Computes: y = Wx + (BA)x * scaling
     Where W is frozen (possibly INT4), and B, A are trainable FP16.
     """
-    
+
     def __init__(
         self,
         base_layer: nn.Module,
@@ -95,40 +102,40 @@ class LoRALinear(nn.Module):
         use_rslora: bool = False,
     ):
         super().__init__()
-        
+
         self.base_layer = base_layer
         self.rank = rank
         self.alpha = alpha
         self.dropout = dropout
         self.use_rslora = use_rslora
-        
+
         # Get dimensions from base layer
-        if hasattr(base_layer, 'in_features'):
+        if hasattr(base_layer, "in_features"):
             self.in_features = base_layer.in_features
             self.out_features = base_layer.out_features
-        elif hasattr(base_layer, 'weight'):
+        elif hasattr(base_layer, "weight"):
             self.out_features, self.in_features = base_layer.weight.shape
         else:
             raise ValueError("Cannot determine dimensions of base layer")
-        
+
         # Scaling factor
         if use_rslora:
             self.scaling = alpha / math.sqrt(rank)
         else:
             self.scaling = alpha / rank
-        
+
         # Get device and dtype from base layer
         device = None
         dtype = None
-        
-        if hasattr(base_layer, 'weight') and base_layer.weight is not None:
+
+        if hasattr(base_layer, "weight") and base_layer.weight is not None:
             device = base_layer.weight.device
             dtype = base_layer.weight.dtype
-        elif hasattr(base_layer, 'weight_packed'):
+        elif hasattr(base_layer, "weight_packed"):
             # INT4 Triton layers store weights as buffers
             device = base_layer.weight_packed.device
             dtype = torch.float16  # LoRA uses FP16 for quantized bases
-        elif hasattr(base_layer, 'scales'):
+        elif hasattr(base_layer, "scales"):
             # Fallback to scales buffer
             device = base_layer.scales.device
             dtype = torch.float16
@@ -145,43 +152,39 @@ class LoRALinear(nn.Module):
                     device = buf.device
                     dtype = torch.float16  # Assume quantized
                 except StopIteration:
-                    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
                     dtype = torch.float16
-        
+
         # Use float16 for training if base is quantized (non-float dtype)
         if dtype is not None and not dtype.is_floating_point:
             dtype = torch.float16
-        
+
         # LoRA matrices (same dtype and device as base)
-        self.lora_A = nn.Parameter(
-            torch.zeros(rank, self.in_features, dtype=dtype, device=device)
-        )
-        self.lora_B = nn.Parameter(
-            torch.zeros(self.out_features, rank, dtype=dtype, device=device)
-        )
-        
+        self.lora_A = nn.Parameter(torch.zeros(rank, self.in_features, dtype=dtype, device=device))
+        self.lora_B = nn.Parameter(torch.zeros(self.out_features, rank, dtype=dtype, device=device))
+
         # Dropout
         self.lora_dropout = nn.Dropout(p=dropout) if dropout > 0 else nn.Identity()
-        
+
         # Initialize
         self.reset_lora_parameters()
-        
+
         # Freeze base layer
         for param in self.base_layer.parameters():
             param.requires_grad = False
-    
+
     def reset_lora_parameters(self):
         """Initialize LoRA weights."""
         # Kaiming uniform for A
         nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
         # Zero for B (so initial LoRA contribution is zero)
         nn.init.zeros_(self.lora_B)
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass with LoRA adaptation."""
         # Base layer output (frozen, possibly INT4)
         base_output = self.base_layer(x)
-        
+
         # LoRA output: (B @ A) @ x * scaling
         # Compute efficiently: B @ (A @ x) to avoid large intermediate
         x_lora = x.to(self.lora_A.dtype)
@@ -189,24 +192,24 @@ class LoRALinear(nn.Module):
         lora_output = F.linear(lora_output, self.lora_A)  # [batch, seq, rank]
         lora_output = F.linear(lora_output, self.lora_B)  # [batch, seq, out]
         lora_output = lora_output * self.scaling
-        
+
         # Combine
         return base_output + lora_output.to(base_output.dtype)
-    
+
     def merge_weights(self) -> None:
         """Merge LoRA weights into base layer (for inference)."""
-        if not hasattr(self.base_layer, 'weight'):
+        if not hasattr(self.base_layer, "weight"):
             raise ValueError("Cannot merge into layer without weight attribute")
-        
+
         # Compute BA and add to base weight
         delta_w = (self.lora_B @ self.lora_A) * self.scaling
         self.base_layer.weight.data += delta_w.to(self.base_layer.weight.dtype)
-    
+
     def unmerge_weights(self) -> None:
         """Remove merged LoRA weights from base layer."""
-        if not hasattr(self.base_layer, 'weight'):
+        if not hasattr(self.base_layer, "weight"):
             raise ValueError("Cannot unmerge from layer without weight attribute")
-        
+
         delta_w = (self.lora_B @ self.lora_A) * self.scaling
         self.base_layer.weight.data -= delta_w.to(self.base_layer.weight.dtype)
 
@@ -217,14 +220,14 @@ def _find_target_modules(
 ) -> Dict[str, nn.Module]:
     """Find all modules matching target names."""
     targets = {}
-    
+
     for name, module in model.named_modules():
         # Check if module name ends with any target
         for target in target_names:
             if name.endswith(target):
                 targets[name] = module
                 break
-    
+
     return targets
 
 
@@ -235,14 +238,14 @@ def _replace_with_lora(
 ) -> None:
     """Replace a module with its LoRA version."""
     # Split name into parent path and attribute name
-    parts = target_name.rsplit('.', 1)
+    parts = target_name.rsplit(".", 1)
     if len(parts) == 1:
         parent = model
         attr_name = parts[0]
     else:
         parent_name, attr_name = parts
         parent = model.get_submodule(parent_name)
-    
+
     setattr(parent, attr_name, lora_layer)
 
 
@@ -252,30 +255,30 @@ def add_lora_to_model(
 ) -> nn.Module:
     """
     Add LoRA adapters to a model.
-    
+
     Args:
         model: The base model (can be quantized)
         config: LoRA configuration
-        
+
     Returns:
         Model with LoRA adapters added
     """
     # Find target modules
     targets = _find_target_modules(model, config.target_modules)
-    
+
     if not targets:
         raise ValueError(
             f"No modules found matching targets: {config.target_modules}. "
             f"Available modules: {[n for n, _ in model.named_modules()][:20]}..."
         )
-    
+
     # Replace with LoRA versions
     replaced = 0
     for name, module in targets.items():
         # Skip if not a linear layer
-        if not isinstance(module, nn.Linear) and not hasattr(module, 'forward'):
+        if not isinstance(module, nn.Linear) and not hasattr(module, "forward"):
             continue
-        
+
         lora_layer = LoRALinear(
             base_layer=module,
             rank=config.rank,
@@ -283,81 +286,83 @@ def add_lora_to_model(
             dropout=config.dropout,
             use_rslora=config.use_rslora,
         )
-        
+
         _replace_with_lora(model, name, lora_layer)
         replaced += 1
-    
+
     print(f"Added LoRA adapters to {replaced} layers (rank={config.rank}, alpha={config.alpha})")
-    
+
     # Store config on model for later
     model._lora_config = config
-    
+
     return model
 
 
 def get_lora_state_dict(model: nn.Module) -> Dict[str, torch.Tensor]:
     """
     Extract only the LoRA parameters from a model.
-    
+
     Returns a state dict containing only lora_A and lora_B weights.
     """
     lora_state = {}
-    
+
     for name, module in model.named_modules():
         if isinstance(module, LoRALinear):
             lora_state[f"{name}.lora_A"] = module.lora_A.data.clone()
             lora_state[f"{name}.lora_B"] = module.lora_B.data.clone()
-    
+
     return lora_state
 
 
 def set_lora_trainable(model: nn.Module, trainable: bool = True) -> None:
     """
     Set LoRA parameters as trainable/frozen.
-    
+
     Also ensures base model stays frozen.
     """
     for name, param in model.named_parameters():
-        if 'lora_A' in name or 'lora_B' in name:
+        if "lora_A" in name or "lora_B" in name:
             param.requires_grad = trainable
         else:
             param.requires_grad = False
-    
+
     # Count trainable params
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total_params = sum(p.numel() for p in model.parameters())
-    
-    print(f"Trainable parameters: {trainable_params:,} / {total_params:,} "
-          f"({100 * trainable_params / total_params:.2f}%)")
+
+    print(
+        f"Trainable parameters: {trainable_params:,} / {total_params:,} "
+        f"({100 * trainable_params / total_params:.2f}%)"
+    )
 
 
 def merge_lora_weights(model: nn.Module) -> nn.Module:
     """
     Merge all LoRA weights into base layers.
-    
+
     After merging, the model behaves as if LoRA was never added,
     but with the adapted weights. Good for inference.
     """
     for module in model.modules():
         if isinstance(module, LoRALinear):
             module.merge_weights()
-    
+
     return model
 
 
 def count_lora_parameters(model: nn.Module) -> Tuple[int, int]:
     """
     Count LoRA and total parameters.
-    
+
     Returns:
         (lora_params, total_params)
     """
     lora_params = 0
     total_params = 0
-    
+
     for name, param in model.named_parameters():
         total_params += param.numel()
-        if 'lora_A' in name or 'lora_B' in name:
+        if "lora_A" in name or "lora_B" in name:
             lora_params += param.numel()
-    
+
     return lora_params, total_params

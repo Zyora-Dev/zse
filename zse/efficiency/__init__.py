@@ -48,6 +48,7 @@ try:
         replace_linear_with_fused,
         benchmark_fused_vs_unfused,
     )
+
     FUSED_KERNELS_AVAILABLE = True
 except ImportError:
     FUSED_KERNELS_AVAILABLE = False

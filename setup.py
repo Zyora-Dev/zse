@@ -24,14 +24,14 @@ def is_cuda_available() -> bool:
     cuda_home = os.environ.get("CUDA_HOME") or os.environ.get("CUDA_PATH")
     if cuda_home and os.path.exists(cuda_home):
         return True
-    
+
     # Try to find nvcc
     try:
         subprocess.check_output(["nvcc", "--version"], stderr=subprocess.DEVNULL)
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         pass
-    
+
     # Check common CUDA paths
     common_paths = [
         "/usr/local/cuda",
@@ -42,7 +42,7 @@ def is_cuda_available() -> bool:
         if os.path.exists(path):
             os.environ["CUDA_HOME"] = path
             return True
-    
+
     return False
 
 
@@ -74,6 +74,7 @@ def get_torch_cuda_arch_list() -> list[str]:
     """Get CUDA architectures supported by current PyTorch installation."""
     try:
         import torch
+
         if torch.cuda.is_available():
             # Get compute capability of current GPU
             cc = torch.cuda.get_device_capability()
@@ -92,11 +93,11 @@ def get_torch_cuda_arch_list() -> list[str]:
 
 class BuildExtension(build_ext):
     """Custom build extension for CUDA kernels."""
-    
+
     def build_extensions(self) -> None:
         """Build CUDA extensions if CUDA is available."""
         cuda_version = get_cuda_version()
-        
+
         if cuda_version is None:
             print("=" * 60)
             print("WARNING: CUDA not found. Building CPU-only version.")
@@ -104,39 +105,36 @@ class BuildExtension(build_ext):
             print("GPU acceleration will fall back to PyTorch/Triton implementations.")
             print("=" * 60)
             # Skip CUDA extensions
-            self.extensions = [
-                ext for ext in self.extensions 
-                if not getattr(ext, 'is_cuda', False)
-            ]
+            self.extensions = [ext for ext in self.extensions if not getattr(ext, "is_cuda", False)]
         else:
             print(f"Found CUDA {cuda_version[0]}.{cuda_version[1]}")
             arch_list = get_torch_cuda_arch_list()
             print(f"Building for architectures: {arch_list}")
-            
+
             # Set architecture flags
             os.environ["TORCH_CUDA_ARCH_LIST"] = ";".join(arch_list)
-        
+
         super().build_extensions()
 
 
 def get_extensions():
     """Get list of extensions to build."""
     extensions = []
-    
+
     # Skip CUDA extensions if CUDA is not available
     if not CUDA_AVAILABLE:
         return extensions
-    
+
     # Check if CUDA source directory exists
     csrc_dir = Path(__file__).parent / "csrc"
-    
+
     if not csrc_dir.exists():
         print("No csrc/ directory found. Skipping CUDA extensions.")
         return extensions
-    
+
     try:
         from torch.utils.cpp_extension import CUDAExtension, CppExtension
-        
+
         # Common compilation flags
         extra_compile_args = {
             "cxx": ["-O3", "-std=c++17"],
@@ -151,11 +149,11 @@ def get_extensions():
                 "--expt-extended-lambda",
             ],
         }
-        
+
         # zAttention CUDA extension
         attention_sources = list((csrc_dir / "attention").glob("*.cu"))
         attention_sources += list((csrc_dir / "attention").glob("*.cpp"))
-        
+
         if attention_sources:
             ext = CUDAExtension(
                 name="zse._C.attention",
@@ -164,11 +162,11 @@ def get_extensions():
             )
             ext.is_cuda = True
             extensions.append(ext)
-        
+
         # zQuantize CUDA extension
         quantize_sources = list((csrc_dir / "quantize").glob("*.cu"))
         quantize_sources += list((csrc_dir / "quantize").glob("*.cpp"))
-        
+
         if quantize_sources:
             ext = CUDAExtension(
                 name="zse._C.quantize",
@@ -177,11 +175,11 @@ def get_extensions():
             )
             ext.is_cuda = True
             extensions.append(ext)
-        
+
         # zKV CUDA extension
         kv_sources = list((csrc_dir / "kv_cache").glob("*.cu"))
         kv_sources += list((csrc_dir / "kv_cache").glob("*.cpp"))
-        
+
         if kv_sources:
             ext = CUDAExtension(
                 name="zse._C.kv_cache",
@@ -190,10 +188,10 @@ def get_extensions():
             )
             ext.is_cuda = True
             extensions.append(ext)
-            
+
     except ImportError:
         print("PyTorch not found. Skipping CUDA extensions.")
-    
+
     return extensions
 
 

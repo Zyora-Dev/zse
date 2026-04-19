@@ -23,8 +23,10 @@ from zse.api.server.chat_store import (
 # Request/Response Models
 # =============================================================================
 
+
 class CreateConversationRequest(BaseModel):
     """Request to create a new conversation."""
+
     title: str = "New Chat"
     model: Optional[str] = None
     system_prompt: Optional[str] = None
@@ -33,6 +35,7 @@ class CreateConversationRequest(BaseModel):
 
 class UpdateConversationRequest(BaseModel):
     """Request to update a conversation."""
+
     title: Optional[str] = None
     model: Optional[str] = None
     system_prompt: Optional[str] = None
@@ -41,6 +44,7 @@ class UpdateConversationRequest(BaseModel):
 
 class AddMessageRequest(BaseModel):
     """Request to add a message."""
+
     role: str = Field(..., pattern="^(user|assistant|system)$")
     content: str
     tokens: Optional[int] = None
@@ -50,6 +54,7 @@ class AddMessageRequest(BaseModel):
 
 class ConversationResponse(BaseModel):
     """Conversation response."""
+
     id: str
     title: str
     model: Optional[str]
@@ -63,6 +68,7 @@ class ConversationResponse(BaseModel):
 
 class MessageResponse(BaseModel):
     """Message response."""
+
     id: str
     conversation_id: str
     role: str
@@ -75,24 +81,28 @@ class MessageResponse(BaseModel):
 
 class ConversationListResponse(BaseModel):
     """List of conversations."""
+
     conversations: List[ConversationResponse]
     total: int
 
 
 class MessageListResponse(BaseModel):
     """List of messages."""
+
     messages: List[MessageResponse]
     conversation_id: str
 
 
 class ExportResponse(BaseModel):
     """Export response."""
+
     format: str
     content: str
 
 
 class ChatStatsResponse(BaseModel):
     """Chat store statistics."""
+
     conversations: int
     messages: int
     total_tokens: int
@@ -110,6 +120,7 @@ router = APIRouter(prefix="/api/chat", tags=["Chat"])
 # =============================================================================
 # Conversation Endpoints
 # =============================================================================
+
 
 @router.post("/conversations", response_model=ConversationResponse)
 async def create_conversation(request: CreateConversationRequest):
@@ -191,6 +202,7 @@ async def search_conversations(
 # Message Endpoints
 # =============================================================================
 
+
 @router.get("/conversations/{conv_id}/messages", response_model=MessageListResponse)
 async def get_messages(
     conv_id: str,
@@ -198,12 +210,12 @@ async def get_messages(
 ):
     """Get all messages in a conversation."""
     store = get_chat_store()
-    
+
     # Verify conversation exists
     conv = store.get_conversation(conv_id)
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    
+
     messages = store.get_messages(conv_id, limit=limit)
     return MessageListResponse(
         messages=[MessageResponse(**m.to_dict()) for m in messages],
@@ -215,12 +227,12 @@ async def get_messages(
 async def add_message(conv_id: str, request: AddMessageRequest):
     """Add a message to a conversation."""
     store = get_chat_store()
-    
+
     # Verify conversation exists
     conv = store.get_conversation(conv_id)
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    
+
     msg = store.add_message(
         conversation_id=conv_id,
         role=request.role,
@@ -245,12 +257,12 @@ async def delete_message(conv_id: str, msg_id: str):
 async def clear_messages(conv_id: str):
     """Clear all messages from a conversation."""
     store = get_chat_store()
-    
+
     # Verify conversation exists
     conv = store.get_conversation(conv_id)
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    
+
     deleted = store.clear_conversation(conv_id)
     return {"status": "cleared", "deleted": deleted}
 
@@ -258,6 +270,7 @@ async def clear_messages(conv_id: str):
 # =============================================================================
 # Export/Import Endpoints
 # =============================================================================
+
 
 @router.get("/conversations/{conv_id}/export", response_model=ExportResponse)
 async def export_conversation(
@@ -287,6 +300,7 @@ async def import_conversation(data: str):
 # =============================================================================
 # Stats Endpoint
 # =============================================================================
+
 
 @router.get("/stats", response_model=ChatStatsResponse)
 async def get_chat_stats():
