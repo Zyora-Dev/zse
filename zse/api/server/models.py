@@ -4,7 +4,7 @@ Pydantic models for ZSE API.
 OpenAI-compatible request/response models plus ZSE-specific models.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List, Dict, Any, Union, Literal
 from datetime import datetime
 from enum import Enum
@@ -14,8 +14,12 @@ from enum import Enum
 # OpenAI-Compatible Models
 # ============================================================================
 
+
 class ChatMessage(BaseModel):
     """Chat message in OpenAI format."""
+
+    model_config = ConfigDict(extra="ignore")
+
     role: Literal["system", "user", "assistant", "tool"]
     content: str
     name: Optional[str] = None
@@ -23,6 +27,9 @@ class ChatMessage(BaseModel):
 
 class ChatCompletionRequest(BaseModel):
     """OpenAI-compatible chat completion request."""
+
+    model_config = ConfigDict(extra="ignore")
+
     model: str
     messages: List[ChatMessage]
     temperature: float = Field(default=0.7, ge=0, le=2)
@@ -37,6 +44,7 @@ class ChatCompletionRequest(BaseModel):
 
 class CompletionRequest(BaseModel):
     """OpenAI-compatible completion request."""
+
     model: str
     prompt: Union[str, List[str]]
     max_tokens: int = Field(default=256, ge=1, le=32768)
@@ -49,6 +57,7 @@ class CompletionRequest(BaseModel):
 
 class ChatCompletionChoice(BaseModel):
     """Single choice in chat completion."""
+
     index: int
     message: ChatMessage
     finish_reason: Optional[str] = None
@@ -56,6 +65,7 @@ class ChatCompletionChoice(BaseModel):
 
 class CompletionChoice(BaseModel):
     """Single choice in completion."""
+
     index: int
     text: str
     finish_reason: Optional[str] = None
@@ -63,6 +73,7 @@ class CompletionChoice(BaseModel):
 
 class UsageStats(BaseModel):
     """Token usage statistics."""
+
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
@@ -70,6 +81,7 @@ class UsageStats(BaseModel):
 
 class ChatCompletionResponse(BaseModel):
     """OpenAI-compatible chat completion response."""
+
     id: str
     object: str = "chat.completion"
     created: int
@@ -80,6 +92,7 @@ class ChatCompletionResponse(BaseModel):
 
 class CompletionResponse(BaseModel):
     """OpenAI-compatible completion response."""
+
     id: str
     object: str = "text_completion"
     created: int
@@ -90,6 +103,7 @@ class CompletionResponse(BaseModel):
 
 class ChatCompletionChunk(BaseModel):
     """Streaming chunk for chat completion."""
+
     id: str
     object: str = "chat.completion.chunk"
     created: int
@@ -99,6 +113,7 @@ class ChatCompletionChunk(BaseModel):
 
 class ModelInfo(BaseModel):
     """Information about a loaded model."""
+
     id: str
     object: str = "model"
     created: int
@@ -107,6 +122,7 @@ class ModelInfo(BaseModel):
 
 class ModelListResponse(BaseModel):
     """List of available models."""
+
     object: str = "list"
     data: List[ModelInfo]
 
@@ -115,10 +131,12 @@ class ModelListResponse(BaseModel):
 # ZSE-Specific Models
 # ============================================================================
 
+
 class LoadModelRequest(BaseModel):
     """Request to load a model."""
+
     model_config = {"protected_namespaces": ()}  # Allow model_ fields
-    
+
     model_name: str
     quantization: Literal["auto", "fp16", "int8", "int4"] = "auto"
     target_vram_gb: Optional[float] = None
@@ -127,8 +145,9 @@ class LoadModelRequest(BaseModel):
 
 class LoadModelResponse(BaseModel):
     """Response after loading a model."""
+
     model_config = {"protected_namespaces": ()}  # Allow model_ fields
-    
+
     success: bool
     model_id: str
     model_name: str
@@ -141,13 +160,15 @@ class LoadModelResponse(BaseModel):
 
 class UnloadModelRequest(BaseModel):
     """Request to unload a model."""
+
     model_config = {"protected_namespaces": ()}  # Allow model_ fields
-    
+
     model_id: str
 
 
 class HealthResponse(BaseModel):
     """Health check response."""
+
     status: str
     version: str
     uptime_seconds: float
@@ -157,6 +178,7 @@ class HealthResponse(BaseModel):
 
 class GPUStats(BaseModel):
     """GPU statistics."""
+
     name: str
     index: int
     total_memory_gb: float
@@ -168,12 +190,14 @@ class GPUStats(BaseModel):
 
 class LoadedModelInfo(BaseModel):
     """Info about a loaded model for dashboard."""
+
     id: str
     name: str
 
 
 class SystemStats(BaseModel):
     """System statistics."""
+
     hostname: str
     cpu_percent: float
     memory_percent: float
@@ -186,6 +210,7 @@ class SystemStats(BaseModel):
 
 class RequestMetrics(BaseModel):
     """Metrics for a single request."""
+
     request_id: str
     model: str
     endpoint: str
@@ -201,6 +226,7 @@ class RequestMetrics(BaseModel):
 
 class AnalyticsOverview(BaseModel):
     """Analytics overview."""
+
     total_requests: int
     successful_requests: int
     failed_requests: int
@@ -216,6 +242,7 @@ class AnalyticsOverview(BaseModel):
 
 class AnalyticsTimeSeries(BaseModel):
     """Time series analytics data."""
+
     timestamps: List[datetime]
     requests_per_minute: List[float]
     tokens_per_second: List[float]
@@ -225,4 +252,5 @@ class AnalyticsTimeSeries(BaseModel):
 
 class ErrorResponse(BaseModel):
     """Error response."""
+
     error: Dict[str, Any]
