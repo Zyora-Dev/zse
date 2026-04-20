@@ -377,7 +377,7 @@ def _show_interactive_help() -> None:
 
 
 def _show_model_info_real(model: str) -> None:
-    """Show real model information."""
+    """Show real model information with improved error handling."""
     console.print(f"\n[bold]Model:[/bold] [green]{model}[/green]")
     
     try:
@@ -434,11 +434,116 @@ def _show_model_info_real(model: str) -> None:
             
             console.print()
             console.print(detail_table)
-        except Exception:
-            pass  # HF config not available
+        except Exception as hf_error:
+            # Silent fail for HF config - not critical
+            pass
+        
+    except ImportError as e:
+        # Handle missing dependencies
+        error_msg = str(e)
+        console.print(f"[red]Missing dependency: {error_msg}[/red]")
+        console.print("\n[yellow]Troubleshooting tips:[/yellow]")
+        if "transformers" in error_msg:
+            console.print("  • Install transformers: [cyan]pip install transformers[/cyan]")
+        elif "torch" in error_msg:
+            console.print("  • Install PyTorch: [cyan]pip install torch[/cyan]")
+        else:
+            console.print("  • Install required packages: [cyan]pip install transformers torch[/cyan]")
+            
+    except ConnectionError as e:
+        # Handle network issues
+        console.print(f"[red]Network error: {e}[/red]")
+        console.print("\n[yellow]Troubleshooting tips:[/yellow]")
+        console.print("  • Check your internet connection")
+        console.print("  • If behind a proxy, set environment variables: [cyan]HTTP_PROXY[/cyan] and [cyan]HTTPS_PROXY[/cyan]")
+        console.print("  • Try using a local model path instead of HuggingFace ID")
+        console.print("\n[dim]Example with local model:[/dim]")
+        console.print("  [cyan]zse info ./path/to/model[/cyan]")
+        
+    except ValueError as e:
+        # Handle invalid model names/format
+        error_msg = str(e)
+        console.print(f"[red]Invalid model specification: {error_msg}[/red]")
+        console.print("\n[yellow]Troubleshooting tips:[/yellow]")
+        console.print("  • Check the model name spelling")
+        console.print("  • Use format: [cyan]organization/model-name[/cyan] (e.g., [cyan]meta-llama/Llama-3-8B[/cyan])")
+        console.print("  • Or provide a local path to a model directory or .zse file")
+        console.print("\n[dim]Examples of valid model specifications:[/dim]")
+        console.print("  [cyan]meta-llama/Llama-3-8B[/cyan]")
+        console.print("  [cyan]Qwen/Qwen2.5-7B-Instruct[/cyan]")
+        console.print("  [cyan]./models/my-model.zse[/cyan]")
+        console.print("  [cyan]/path/to/huggingface/model[/cyan]")
+        
+    except FileNotFoundError as e:
+        # Handle local model not found
+        error_msg = str(e)
+        console.print(f"[red]Model not found: {error_msg}[/red]")
+        console.print("\n[yellow]Troubleshooting tips:[/yellow]")
+        console.print("  • Check that the local path exists and is accessible")
+        console.print("  • For HuggingFace models, ensure the model ID is correct")
+        console.print("  • Try downloading first: [cyan]zse pull {model}[/cyan]")
+        console.print(f"\n[dim]Current working directory: {Path.cwd()}[/dim]")
+        
+    except PermissionError as e:
+        # Handle permission issues
+        console.print(f"[red]Permission denied: {e}[/red]")
+        console.print("\n[yellow]Troubleshooting tips:[/yellow]")
+        console.print("  • Check file/directory permissions")
+        console.print("  • Try running with appropriate user access")
+        console.print("  • Ensure the cache directory is writable")
         
     except Exception as e:
-        console.print(f"[red]Error analyzing model: {e}[/red]")
+        # Generic error with helpful context
+        error_type = type(e).__name__
+        error_msg = str(e)
+        
+        console.print(f"[red]Error analyzing model: {error_type} - {error_msg}[/red]")
+        console.print("\n[yellow]Common issues and solutions:[/yellow]")
+        
+        # Check for specific error patterns
+        error_lower = error_msg.lower()
+        
+        if "authentication" in error_lower or "unauthorized" in error_lower or "401" in error_lower:
+            console.print("  • This model requires authentication (gated model)")
+            console.print("  • Log in with: [cyan]zse login[/cyan]")
+            console.print("  • Get token from: https://huggingface.co/settings/tokens")
+            
+        elif "rate limit" in error_lower or "429" in error_lower:
+            console.print("  • Rate limited by HuggingFace API")
+            console.print("  • Wait a few minutes and try again")
+            console.print("  • Or use a cached model with: [cyan]zse pull {model}[/cyan]")
+            
+        elif "timeout" in error_lower or "timed out" in error_lower:
+            console.print("  • Connection timeout - network may be slow")
+            console.print("  • Check your internet connection")
+            console.print("  • Try again later")
+            
+        elif "memory" in error_lower or "cuda" in error_lower or "out of memory" in error_lower:
+            console.print("  • Out of memory - model may be too large")
+            console.print("  • Use a smaller model or quantization:")
+            console.print("    [cyan]zse info {model} --efficiency memory[/cyan]")
+            console.print("  • Or run with CPU only: [cyan]zse info {model} --device cpu[/cyan]")
+            
+        elif "not found" in error_lower or "404" in error_lower:
+            console.print("  • Model not found on HuggingFace")
+            console.print("  • Verify the model ID is correct")
+            console.print("  • Browse available models at: https://huggingface.co/models")
+            
+        else:
+            console.print("  • Check model name spelling and format")
+            console.print("  • Ensure you have a stable internet connection")
+            console.print("  • Try downloading the model first: [cyan]zse pull {model}[/cyan]")
+            console.print("  • Check HuggingFace status: https://status.huggingface.co/")
+        
+        # Add debugging tips
+        console.print("\n[dim]For more details, run with verbose logging:[/dim]")
+        console.print(f"  [cyan]python -c \"import logging; logging.basicConfig(level=logging.DEBUG)\" && zse info {model}[/cyan]")
+        
+        # Show how to get help
+        console.print("\n[dim]Need help?[/dim]")
+        console.print("  • Check documentation: [cyan]zse --help[/cyan]")
+        console.print("  • List available models: [cyan]zse list[/cyan]")
+        console.print("  • Get hardware info: [cyan]zse hardware[/cyan]")
 
 
 def _show_hardware_summary() -> None:
