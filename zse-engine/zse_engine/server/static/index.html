@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZSE</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+    <!-- Sidebar -->
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <h1>ZSE</h1>
+            <span class="version">v2.0</span>
+        </div>
+
+        <button class="new-chat-btn" onclick="newChat()">
+            <span class="icon">+</span>
+            <span>New chat</span>
+        </button>
+
+        <div class="nav-section">
+            <div class="nav-item active" data-panel="chat" onclick="switchPanel('chat')">
+                <span class="icon">&#9776;</span>
+                <span>Chat</span>
+            </div>
+            <div class="nav-item" data-panel="keys" onclick="switchPanel('keys')">
+                <span class="icon">&#9919;</span>
+                <span>API Keys</span>
+            </div>
+            <div class="nav-item" data-panel="stats" onclick="switchPanel('stats')">
+                <span class="icon">&#9632;</span>
+                <span>Dashboard</span>
+            </div>
+            <div class="nav-item" data-panel="lora" onclick="switchPanel('lora')">
+                <span class="icon">&#9881;</span>
+                <span>LoRA Adapters</span>
+            </div>
+            <div class="nav-item" data-panel="rag" onclick="switchPanel('rag')">
+                <span class="icon">&#9733;</span>
+                <span>RAG Documents</span>
+            </div>
+        </div>
+
+        <div class="sessions-list" id="sessions-list"></div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main">
+        <!-- Chat Panel -->
+        <div class="panel active" id="panel-chat">
+            <div class="chat-container">
+                <div class="messages" id="messages">
+                    <div class="welcome" id="welcome">
+                        <h2>ZSE Inference Engine</h2>
+                        <p>Zero-dependency LLM serving. Ask anything.</p>
+                    </div>
+                </div>
+                <div class="chat-input-area">
+                    <div class="chat-input-box">
+                        <textarea id="chat-input" placeholder="Message ZSE..." rows="1"
+                            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
+                        <button class="send-btn" onclick="sendMessage()" id="send-btn">&#8593;</button>
+                    </div>
+                    <div class="chat-options">
+                        <label>Model
+                            <select id="model-select"><option value="">default</option></select>
+                        </label>
+                        <label>LoRA
+                            <select id="lora-select"><option value="">none</option></select>
+                        </label>
+                        <label>Temp
+                            <input type="number" value="0.7" min="0" max="2" step="0.1"
+                                style="width:52px" id="temp-input">
+                        </label>
+                        <label class="rag-toggle">
+                            <input type="checkbox" id="rag-toggle"> RAG
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- API Keys Panel -->
+        <div class="panel" id="panel-keys">
+            <div class="main-header">
+                <h2>API Keys</h2>
+                <button class="btn btn-primary" onclick="showCreateKey()">Create Key</button>
+            </div>
+            <div class="content">
+                <div class="card" id="create-key-form" style="display:none">
+                    <h3>Create New API Key</h3>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Name</label>
+                            <input type="text" id="key-name" placeholder="My API key">
+                        </div>
+                        <div class="form-group">
+                            <label>Rate Limit (req/min)</label>
+                            <input type="number" id="key-rpm" value="60">
+                        </div>
+                        <div class="form-group">
+                            <label>Token Limit (tok/min)</label>
+                            <input type="number" id="key-tpm" value="100000">
+                        </div>
+                        <button class="btn btn-primary" onclick="createKey()" style="margin-bottom:0">Create</button>
+                    </div>
+                </div>
+                <div class="card" id="new-key-display" style="display:none">
+                    <h3>New API Key Created</h3>
+                    <p style="color:#fbbf24;margin-bottom:8px;font-size:13px">Save this key now. It won't be shown again.</p>
+                    <pre id="new-key-value" style="padding:12px;background:var(--bg-main);border-radius:8px;user-select:all;cursor:pointer;font-size:13px"></pre>
+                </div>
+                <div class="card">
+                    <h3>Active Keys</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Prefix</th>
+                                <th>Name</th>
+                                <th>Status</th>
+                                <th>Rate Limit</th>
+                                <th>Usage</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="keys-table"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Stats Panel -->
+        <div class="panel" id="panel-stats">
+            <div class="main-header">
+                <h2>Dashboard</h2>
+                <span id="stats-uptime" style="color:var(--text-dim);font-size:13px"></span>
+            </div>
+            <div class="content">
+                <div class="stats-grid" id="stats-grid"></div>
+                <div class="card">
+                    <h3>Usage Summary</h3>
+                    <div id="usage-stats"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- LoRA Panel -->
+        <div class="panel" id="panel-lora">
+            <div class="main-header">
+                <h2>LoRA Adapters</h2>
+                <button class="btn btn-primary" onclick="showLoadLora()">Load Adapter</button>
+            </div>
+            <div class="content">
+                <div class="card" id="load-lora-form" style="display:none">
+                    <h3>Load LoRA Adapter</h3>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Adapter ID</label>
+                            <input type="text" id="lora-id" placeholder="my-adapter">
+                        </div>
+                        <div class="form-group">
+                            <label>File Path</label>
+                            <input type="text" id="lora-path" placeholder="/path/to/adapter.zse-lora">
+                        </div>
+                        <button class="btn btn-primary" onclick="loadLora()" style="margin-bottom:0">Load</button>
+                    </div>
+                </div>
+                <div class="card">
+                    <h3>Loaded Adapters</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Rank</th>
+                                <th>Alpha</th>
+                                <th>Layers</th>
+                                <th>Modules</th>
+                                <th>GPU Memory</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="lora-table"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- RAG Panel -->
+        <div class="panel" id="panel-rag">
+            <div class="main-header">
+                <h2>RAG Documents</h2>
+                <div style="display:flex;gap:8px;align-items:center">
+                    <span id="rag-stats-badge" style="color:var(--text-dim);font-size:13px"></span>
+                    <button class="btn btn-primary" onclick="document.getElementById('rag-file-input').click()">Upload Document</button>
+                    <input type="file" id="rag-file-input" style="display:none" accept=".txt,.md,.json,.jsonl,.csv,.pdf" onchange="uploadDocument(this.files[0])">
+                </div>
+            </div>
+            <div class="content">
+                <!-- Upload Dropzone -->
+                <div class="card dropzone" id="rag-dropzone"
+                    ondragover="event.preventDefault();this.classList.add('drag-over')"
+                    ondragleave="this.classList.remove('drag-over')"
+                    ondrop="event.preventDefault();this.classList.remove('drag-over');uploadDocument(event.dataTransfer.files[0])">
+                    <div class="dropzone-inner">
+                        <div class="dropzone-icon">&#8593;</div>
+                        <p>Drag & drop a file here, or click Upload Document</p>
+                        <p class="dropzone-hint">Supports: .txt, .md, .json, .jsonl, .csv, .pdf</p>
+                    </div>
+                </div>
+
+                <!-- Upload Progress -->
+                <div class="card" id="rag-upload-progress" style="display:none">
+                    <div class="upload-status">
+                        <span class="typing-indicator" style="display:inline-flex"><span></span><span></span><span></span></span>
+                        <span id="rag-upload-text">Uploading...</span>
+                    </div>
+                </div>
+
+                <!-- Search -->
+                <div class="card">
+                    <h3>Search Documents</h3>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <input type="text" id="rag-search-input" placeholder="Search your documents..."
+                                onkeydown="if(event.key==='Enter')searchRAG()">
+                        </div>
+                        <button class="btn btn-primary" onclick="searchRAG()" style="margin-bottom:0">Search</button>
+                    </div>
+                    <div id="rag-search-results"></div>
+                </div>
+
+                <!-- Document List -->
+                <div class="card">
+                    <h3>Uploaded Documents</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Type</th>
+                                <th>Chunks</th>
+                                <th>Original Tokens</th>
+                                <th>Compressed</th>
+                                <th>Savings</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rag-table"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="toast-container" id="toast-container"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
