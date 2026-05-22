@@ -267,6 +267,19 @@ zse-engine/          Production inference engine.
 
 Apache 2.0 — see [LICENSE](LICENSE).
 
+## Acknowledgments
+
+ZSE's AMD MI300X validation, the 32B-parameter benchmarks, and a large share of our ROCm
+kernel development work was made possible by [**DigitalOcean's Open Source Sponsorship
+Program**](https://www.digitalocean.com/open-source/credits-for-projects), which provides
+cloud GPU credits to independent open-source projects. The MI300X numbers throughout this
+README — cold start, VRAM, throughput, the wave-64 INT4 GEMV rewrite — were all measured
+on DigitalOcean infrastructure. Thank you to the DigitalOcean team for backing zero-dep
+infrastructure work.
+
+If you maintain an open-source project that needs serious GPU time, apply here:
+https://www.digitalocean.com/open-source/credits-for-projects
+
 ## Contact
 
 - Website: [zllm.in](https://zllm.in)
