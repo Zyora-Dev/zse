@@ -104,19 +104,29 @@ class VRAMAllocator:
         self._allocated_bytes = 0
         self._weight_bytes = 0
 
-    def plan_allocation(self, model_size_bytes: int, config, max_seq_len: int = 2048) -> VRAMPlan:
+    def plan_allocation(
+        self,
+        model_size_bytes: int,
+        config,
+        max_seq_len: int = 2048,
+        max_batch_seqs: int = 8,
+        kv_headroom_ratio: float = 1.5,
+    ) -> VRAMPlan:
         """Plan VRAM allocation before loading anything.
 
         Memory budget strategy:
         - Weights: fixed, known from model size
         - Scratch: fixed, computed from config + max_seq_len
-        - KV cache: bounded — enough for max_batch_seqs * max_seq_len, NOT all remaining VRAM
-        - Reserved: 5% safety margin + CUDA context
+        - KV cache: sized to actual workload (max_batch_seqs * max_seq_len) with
+          a small headroom multiplier — NOT all remaining VRAM
+        - Reserved: 5% safety margin + CUDA context + whatever remains free
 
         Args:
             model_size_bytes: Estimated model weight size in GPU
             config: ModelConfig for computing scratch/KV sizes
             max_seq_len: Max sequence length for scratch buffer sizing
+            max_batch_seqs: Max concurrent sequences (drives KV demand)
+            kv_headroom_ratio: Multiplier on demand-based KV size (default 1.5x)
         """
         if self._gpu_mem is not None:
             total_vram = self._gpu_mem.get_total_memory()
@@ -138,36 +148,28 @@ class VRAMAllocator:
         # Scratch budget
         scratch_bytes = self._estimate_scratch_bytes(config, max_seq_len)
 
-        # KV cache: cap at reasonable size
-        # Rule: use up to 60% of remaining VRAM after weights+scratch,
-        # but never more than what's needed for reasonable concurrency.
-        # For a 7B model: ~512KB per token per layer-set.
-        # 100K tokens is plenty for most serving scenarios.
+        # KV cache: size from ACTUAL workload, not "all remaining VRAM"
+        # demand = max_batch_seqs * max_seq_len * bytes_per_token * headroom
         remaining = usable - weight_bytes - scratch_bytes
         remaining = max(remaining, 0)
 
-        # Cap KV cache at 60% of remaining to leave headroom for runtime allocations
-        kv_bytes = int(remaining * 0.60)
+        bytes_per_token = max(1, config.total_kv_cache_bytes_per_token)
+        demand_tokens = max(1, max_batch_seqs) * max(1, max_seq_len)
+        demand_bytes = int(demand_tokens * bytes_per_token * max(1.0, kv_headroom_ratio))
 
-        # Cap KV based on actual GPU free memory if available, else static caps
-        # Static caps as fallback
-        param_count_est = model_size_bytes / 0.5  # Rough: INT4 ≈ 0.5 bytes/param
-        if param_count_est < 13e9:
-            max_kv = 8 * 1024**3   # 8GB cap
-        else:
-            max_kv = 12 * 1024**3  # 12GB cap (conservative for 40GB GPUs)
+        # Floor: at least 256 MB so tiny configs still work
+        # Ceiling: never exceed what's remaining after weights+scratch
+        kv_bytes = max(256 * 1024 * 1024, demand_bytes)
+        kv_bytes = min(kv_bytes, remaining)
 
-        # If we have a GPU memory handle, use actual free memory for tighter bound
+        # If we have a GPU memory handle, double-check against actual free memory
         if self._gpu_mem is not None:
             try:
                 actual_free = self._gpu_mem.get_free_memory()
-                # Leave 1GB headroom beyond what we've already reserved
                 max_from_free = max(0, actual_free - weight_bytes - scratch_bytes - 1 * 1024**3)
-                max_kv = min(max_kv, max_from_free)
+                kv_bytes = min(kv_bytes, max_from_free)
             except Exception:
-                pass  # Fall back to static cap
-
-        kv_bytes = min(kv_bytes, max_kv)
+                pass
 
         # Update reserved to include the unused remainder
         actual_used = weight_bytes + scratch_bytes + kv_bytes

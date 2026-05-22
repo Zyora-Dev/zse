@@ -23,7 +23,10 @@ float32 = DType(name="float32", size_bits=32, cuda_type="float", hip_type="float
 float16 = DType(name="float16", size_bits=16, cuda_type="half", hip_type="half", metal_type="half")
 bfloat16 = DType(name="bfloat16", size_bits=16, cuda_type="__nv_bfloat16", hip_type="hip_bfloat16", metal_type="bfloat")
 int32 = DType(name="int32", size_bits=32, cuda_type="int", hip_type="int", metal_type="int")
+int16 = DType(name="int16", size_bits=16, cuda_type="short", hip_type="short", metal_type="short")
 int8 = DType(name="int8", size_bits=8, cuda_type="int8_t", hip_type="int8_t", metal_type="char")
+uint32 = DType(name="uint32", size_bits=32, cuda_type="unsigned int", hip_type="unsigned int", metal_type="uint")
+uint16 = DType(name="uint16", size_bits=16, cuda_type="unsigned short", hip_type="unsigned short", metal_type="ushort")
 uint8 = DType(name="uint8", size_bits=8, cuda_type="uint8_t", hip_type="uint8_t", metal_type="uchar")
 
 # Quantized types — packed representations
@@ -36,10 +39,17 @@ DTYPE_MAP = {
     "float16": float16,
     "bfloat16": bfloat16,
     "int32": int32,
+    "int16": int16,
     "int8": int8,
+    "uint32": uint32,
+    "uint16": uint16,
     "uint8": uint8,
     "int4": int4,
     "uint4": uint4,
+    # Aliases
+    "fp32": float32,
+    "fp16": float16,
+    "bf16": bfloat16,
 }
 
 

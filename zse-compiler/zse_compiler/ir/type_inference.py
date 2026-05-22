@@ -16,6 +16,7 @@ from zse_compiler.ir.nodes import (
     IRLoad, IRMathFunc, IRWarpShuffle, IRWarpVote,
     IRWarpReduce, IRBlockReduce,
     IRLoadFloat4, IRLoadHalf2,
+    IRLocalArrayDecl, IRReinterpret,
 )
 from typing import Dict
 
@@ -46,7 +47,14 @@ def _infer_body(stmts: list, types: Dict[str, str]):
             if stmt.dtype:
                 types[stmt.name] = stmt.dtype
             else:
-                types[stmt.name] = _infer_expr_type(stmt.value, types)
+                # Special-case: RHS is a pointer reinterpret — record as ptr:<elem>
+                if isinstance(stmt.value, IRReinterpret):
+                    types[stmt.name] = f"ptr:{stmt.value.dtype}"
+                else:
+                    types[stmt.name] = _infer_expr_type(stmt.value, types)
+        elif isinstance(stmt, IRLocalArrayDecl):
+            # Stack array — record element type as ptr:<elem> so indexed loads infer correctly
+            types[stmt.name] = f"ptr:{stmt.dtype}"
         elif isinstance(stmt, IRFor):
             types[stmt.var] = "int"
             _infer_body(stmt.body, types)
@@ -94,7 +102,17 @@ def _infer_expr_type(node: IRNode, types: Dict[str, str]) -> str:
         return node.dtype
 
     elif isinstance(node, IRLoad):
+        # If we're loading from a known pointer variable (reinterpret or local_array),
+        # return the element type so downstream arithmetic is correctly typed.
+        if isinstance(node.tensor, IRVar):
+            t = types.get(node.tensor.name, "")
+            if t.startswith("ptr:"):
+                return t[4:]
         return "float"  # Tensor loads are float by default
+
+    elif isinstance(node, IRReinterpret):
+        # As an rvalue, a reinterpret evaluates to a pointer of the chosen dtype.
+        return f"ptr:{node.dtype}"
 
     elif isinstance(node, (IRMathFunc, IRWarpReduce, IRBlockReduce)):
         return "float"

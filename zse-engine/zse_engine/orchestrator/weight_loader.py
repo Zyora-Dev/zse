@@ -7,6 +7,8 @@ For a 7B INT4 model (~3.5GB), this takes <2s on PCIe 4.0 (vs vLLM's 5-10s
 which includes PyTorch tensor creation + safetensors deserialization).
 """
 
+import ctypes
+import os
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple, List, Callable
 
@@ -15,6 +17,33 @@ from zse_compiler.types.dtypes import float16, int4, int8, uint4
 
 from zse_engine.format.loader import ZSELoader
 from zse_engine.format.weight_index import WeightEntry
+
+
+def _read_exact_into(fd: int, mv: memoryview, offset: int, nbytes: int) -> None:
+    """Read exactly `nbytes` bytes from fd at `offset` into `mv`.
+
+    Uses os.preadv on Linux for one-copy kernel→pinned reads (no Python
+    bytes object materialised). Falls back to os.pread (two copies) on
+    platforms / Python builds without preadv.
+    """
+    read = 0
+    _preadv = getattr(os, "preadv", None)
+    if _preadv is not None:
+        # Reads positional, doesn't move fd cursor. Single kernel→buffer copy.
+        while read < nbytes:
+            n = _preadv(fd, [mv[read:nbytes]], offset + read)
+            if n <= 0:
+                raise IOError(f"preadv: unexpected EOF at offset {offset + read}")
+            read += n
+        return
+    # Fallback: os.pread returns a bytes object, copy into mv.
+    while read < nbytes:
+        chunk = os.pread(fd, nbytes - read, offset + read)
+        if not chunk:
+            raise IOError(f"pread: unexpected EOF at offset {offset + read}")
+        n = len(chunk)
+        mv[read:read + n] = chunk
+        read += n
 
 
 @dataclass
@@ -119,9 +148,21 @@ class WeightStore:
 class WeightLoader:
     """Loads .zse weights from mmap to GPU.
 
-    Uses BULK ALLOCATION: single hipMalloc for all weights, then one large
-    memcpy. This reduces 771 hipMalloc calls (~8ms each = 6s) to just ONE
-    allocation + ONE copy (~0.6s for 18.7GB on MI300X PCIe 5.0).
+    Uses STREAMED BULK ALLOCATION:
+      1. One cuMemAlloc for all weights (eliminates 771 per-tensor mallocs).
+      2. One contiguous read of the WEIGHT_DATA section from the .zse file
+         into a small pinned host ring buffer (4 x 64MB by default).
+      3. Async cuMemcpyHtoDAsync per chunk on a dedicated stream — pipelines
+         storage I/O (NFS / NVMe / S3 FUSE) with PCIe transfer.
+      4. Per-tensor GPU pointers are computed as sub-offsets into the bulk
+         pool. No GPU-side relayout — the .zse file layout (PAGE_SIZE +
+         TENSOR_ALIGN aligned) is preserved 1:1 on the device.
+
+    This works identically on Modal, RunPod, Lambda, bare metal, AWS, GCP —
+    any compute provider with a CUDA/HIP driver. Zero dependencies.
+
+    Falls back to per-tensor copy if pinned alloc or streams fail
+    (e.g. Metal backend, or constrained host memory).
 
     Usage:
         loader = ZSELoader("model.zse")
@@ -129,12 +170,147 @@ class WeightLoader:
         store = wl.load_all()
     """
 
+    # Pinned ring buffer config (tunable via env vars for benchmarking).
+    _DEFAULT_CHUNK_BYTES = 64 * 1024 * 1024   # 64 MB per pinned slot
+    _DEFAULT_RING_SLOTS = 4                   # 4 slots → 256 MB pinned footprint
+
     def __init__(self, loader: ZSELoader, gpu_mem):
         self._loader = loader
         self._gpu_mem = gpu_mem
         self._bulk_ptr = 0  # Base pointer for bulk allocation
 
     def load_all(
+        self,
+        progress_fn: Optional[Callable[[str, int, int], None]] = None,
+    ) -> WeightStore:
+        """Upload all weights using streamed bulk allocation.
+
+        Returns a WeightStore with sub-pointers into a single GPU pool.
+        """
+        # Try the fast streamed path; fall back to per-tensor on any failure.
+        try:
+            return self._load_all_streamed(progress_fn)
+        except Exception as e:
+            import os as _os
+            if _os.environ.get("ZSE_DEBUG_LOAD"):
+                import traceback
+                traceback.print_exc()
+                print(f"[WeightLoader] streamed path failed ({e}); falling back to per-tensor copy")
+            return self._load_all_per_tensor(progress_fn)
+
+    # ------------------------------------------------------------------ #
+    # Fast path: streamed pinned ring buffer
+    # ------------------------------------------------------------------ #
+    def _load_all_streamed(
+        self,
+        progress_fn: Optional[Callable[[str, int, int], None]] = None,
+    ) -> WeightStore:
+        import os as _os
+
+        store = WeightStore()
+        entries = list(self._loader.weight_index)
+        total = len(entries)
+
+        # The .zse file layout is already contiguous + aligned. We mirror it
+        # verbatim on the GPU: one big allocation = section_size, and each
+        # entry's GPU pointer = bulk_ptr + entry.data_offset.
+        file_offset, section_size = self._loader.weight_data_section()
+        if section_size == 0:
+            return store
+
+        # Phase 1: single GPU allocation
+        if progress_fn:
+            progress_fn("bulk_alloc", 0, total)
+        self._bulk_ptr = self._gpu_mem.malloc_raw(section_size)
+
+        # Phase 2: pinned ring buffer + stream
+        chunk_bytes = int(_os.environ.get("ZSE_LOAD_CHUNK_MB", "64")) * 1024 * 1024
+        ring_slots = int(_os.environ.get("ZSE_LOAD_RING", str(self._DEFAULT_RING_SLOTS)))
+        chunk_bytes = min(chunk_bytes, section_size)
+        if chunk_bytes <= 0:
+            chunk_bytes = self._DEFAULT_CHUNK_BYTES
+
+        pinned_ptrs = [self._gpu_mem.pinned_alloc(chunk_bytes) for _ in range(ring_slots)]
+        # ctypes view over each pinned slot for fast os.readinto()
+        pinned_views = [
+            (ctypes.c_char * chunk_bytes).from_address(p) for p in pinned_ptrs
+        ]
+        stream = self._gpu_mem.create_stream()
+
+        # Phase 3: pipelined read + async HtoD
+        fd = self._loader.file_descriptor
+        if fd < 0:
+            raise RuntimeError("ZSE loader has no open file descriptor")
+
+        bytes_done = 0
+        chunk_idx = 0
+        try:
+            while bytes_done < section_size:
+                this_chunk = min(chunk_bytes, section_size - bytes_done)
+                slot = chunk_idx % ring_slots
+
+                # If this slot is in-flight from a previous round, wait for it.
+                # We achieve this by syncing the stream once per ring lap.
+                if chunk_idx >= ring_slots:
+                    self._gpu_mem.synchronize_stream(stream)
+
+                # Read directly from file into pinned buffer (no Python bytes copy).
+                # os.pread is thread-safe + doesn't move the fd cursor.
+                view = pinned_views[slot]
+                # Read into a memoryview slice of the ctypes buffer.
+                mv = memoryview(view)[:this_chunk]
+                read_pos = file_offset + bytes_done
+                _read_exact_into(fd, mv, read_pos, this_chunk)
+
+                # Queue async HtoD copy.
+                self._gpu_mem.copy_host_to_device_async_raw_ptr(
+                    src_ptr=pinned_ptrs[slot],
+                    dst_ptr=self._bulk_ptr + bytes_done,
+                    nbytes=this_chunk,
+                    stream=stream,
+                )
+
+                bytes_done += this_chunk
+                chunk_idx += 1
+
+                if progress_fn and chunk_idx % 4 == 0:
+                    progress_fn("upload", bytes_done, section_size)
+
+            # Final sync — all queued copies complete.
+            self._gpu_mem.synchronize_stream(stream)
+        finally:
+            self._gpu_mem.destroy_stream(stream)
+            for p in pinned_ptrs:
+                self._gpu_mem.pinned_free(p)
+
+        # Phase 4: assemble GPUWeight metadata (no GPU work)
+        for idx, entry in enumerate(entries):
+            data_ptr = self._bulk_ptr + entry.data_offset
+            scales_ptr = (self._bulk_ptr + entry.scale_offset) if entry.scale_nbytes > 0 else 0
+            zeros_ptr = (self._bulk_ptr + entry.zeros_offset) if entry.zeros_nbytes > 0 else 0
+            store.add(GPUWeight(
+                name=entry.name,
+                shape=entry.shape,
+                dtype=entry.dtype,
+                data_ptr=data_ptr,
+                data_nbytes=entry.data_nbytes,
+                scales_ptr=scales_ptr,
+                scales_nbytes=entry.scale_nbytes,
+                zeros_ptr=zeros_ptr,
+                zeros_nbytes=entry.zeros_nbytes,
+                group_size=entry.group_size,
+                num_elements=entry.num_elements,
+            ))
+
+        store._bulk_ptr = self._bulk_ptr
+        store._bulk_nbytes = section_size
+        store._gpu_mem = self._gpu_mem
+        return store
+
+    # ------------------------------------------------------------------ #
+    # Fallback path: original per-tensor copy (Metal / unsupported)
+    # ------------------------------------------------------------------ #
+    def _load_all_per_tensor(
         self,
         progress_fn: Optional[Callable[[str, int, int], None]] = None,
     ) -> WeightStore:

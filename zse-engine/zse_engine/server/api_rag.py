@@ -37,6 +37,7 @@ class RAGAPI:
         router.delete("/v1/rag/document/{id}", self.handle_delete)
         router.post("/v1/rag/search", self.handle_search)
         router.get("/v1/rag/stats", self.handle_stats)
+        router.post("/v1/rag/backfill_dense", self.handle_backfill_dense)
 
     def _check_auth(self, request: Request):
         """Authenticate and return (auth_result, error_response)."""
@@ -78,6 +79,7 @@ class RAGAPI:
 
         chunk_size = body.get("chunk_size")
         overlap = body.get("overlap")
+        pdf_password = body.get("pdf_password")
 
         try:
             result = self._rag.ingest(
@@ -85,6 +87,7 @@ class RAGAPI:
                 content=content,
                 chunk_size=chunk_size,
                 overlap=overlap,
+                pdf_password=pdf_password,
             )
             if "error" in result:
                 return Response.error(result["error"])
@@ -140,6 +143,7 @@ class RAGAPI:
         # Ingest new
         chunk_size = body.get("chunk_size")
         overlap = body.get("overlap")
+        pdf_password = body.get("pdf_password")
 
         try:
             result = self._rag.ingest(
@@ -147,6 +151,7 @@ class RAGAPI:
                 content=content,
                 chunk_size=chunk_size,
                 overlap=overlap,
+                pdf_password=pdf_password,
             )
             if "error" in result:
                 return Response.error(result["error"])
@@ -248,14 +253,27 @@ class RAGAPI:
         # Multi-query decomposition
         multi_query = body.get("multi_query", False)
 
+        # Modern RAG flags (require model_runner wired into engine)
+        use_dense = body.get("use_dense")  # None = auto
+        use_rerank = bool(body.get("use_rerank", False))
+        candidate_pool = int(body.get("candidate_pool", 30))
+        fusion = body.get("fusion", "rrf")
+
         if multi_query:
             results = self._rag.multi_query_search(query, top_k=top_k, filters=filters)
-        elif filters:
-            results = self._rag.search(query, top_k=top_k, filters=filters)
         else:
-            results = self._rag.search(query, top_k=top_k)
+            results = self._rag.search(
+                query, top_k=top_k, filters=filters or None,
+                use_dense=use_dense, use_rerank=use_rerank,
+                candidate_pool=candidate_pool, fusion=fusion,
+            )
 
-        return Response.json({"results": results, "query": query})
+        return Response.json({
+            "results": results, "query": query,
+            "dense_used": bool(use_dense) if use_dense is not None else self._rag.has_dense(),
+            "rerank_used": use_rerank,
+            "fusion": fusion,
+        })
 
     async def handle_stats(self, request: Request) -> Response:
         """RAG store statistics."""
@@ -271,3 +289,22 @@ class RAGAPI:
             })
 
         return Response.json(self._rag.stats())
+
+    async def handle_backfill_dense(self, request: Request) -> Response:
+        """Compute dense embeddings for any chunks missing them.
+
+        Useful after initial server start to upgrade existing keyword-only
+        documents to neural retrieval. Idempotent.
+        """
+        auth, err = self._check_auth(request)
+        if err:
+            return err
+        if not self._rag or not self._rag.has_dense():
+            return Response.json({
+                "status": "dense_not_available",
+                "embedded": 0,
+                "reason": ("Model runner not wired into RAG engine "
+                            "(no inference model loaded?)"),
+            })
+        count = self._rag.backfill_dense_embeddings()
+        return Response.json({"status": "ok", "embedded": count})

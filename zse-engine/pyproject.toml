@@ -4,14 +4,62 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zse-engine"
-version = "0.1.0"
-description = "ZSE Production LLM Inference Server — fastest cold start, minimal VRAM."
-requires-python = ">=3.10"
+version = "2.0.0"
+description = "Zero-dependency LLM inference engine. Fastest cold start, smallest VRAM footprint. CUDA + ROCm + Metal."
+readme = "../README.md"
+requires-python = ">=3.11"
 license = {text = "Apache-2.0"}
-dependencies = ["zse-compiler==0.1.0"]
+authors = [
+    {name = "Zyora Labs", email = "zse@zyoralabs.com"},
+]
+keywords = [
+    "llm",
+    "inference",
+    "serving",
+    "cuda",
+    "rocm",
+    "metal",
+    "int4",
+    "quantization",
+    "openai-api",
+    "rag",
+    "lora",
+    "tensor-parallel",
+    "gpu",
+    "transformer",
+    "no-pytorch",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Environment :: GPU :: NVIDIA CUDA",
+]
+dependencies = ["zse-compiler==2.0.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
 
+[project.urls]
+Homepage = "https://zllm.in"
+Repository = "https://github.com/Zyora-Dev/zse"
+Documentation = "https://github.com/Zyora-Dev/zse#readme"
+Changelog = "https://github.com/Zyora-Dev/zse/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Zyora-Dev/zse/issues"
+Sponsor = "https://github.com/sponsors/Zyora-Dev"
+
 [project.scripts]
+zse = "zse_engine.cli:main"
 zse-convert = "zse_engine.format.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["zse_engine*"]

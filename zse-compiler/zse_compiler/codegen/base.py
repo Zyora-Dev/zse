@@ -17,10 +17,18 @@ from zse_compiler.ir.nodes import (
     IRTileLoad, IRTileStore,
     # WMMA
     IRWmmaLoadA, IRWmmaLoadB, IRWmmaFill, IRWmmaMMA, IRWmmaStore,
+    # CDNA MFMA (Tier-4)
+    IRMfmaOp,
     # FP16
     IRHalfToFloat, IRFloatToHalf,
     # Dynamic shared memory
     IRDynamicSharedMemDecl,
+    # INT4 unpack
+    IRUnpackInt4,
+    IRUnpackUint4,
+    # Local register array + pointer reinterpret
+    IRLocalArrayDecl,
+    IRReinterpret,
 )
 from zse_compiler.ir.type_inference import infer_types
 
@@ -111,6 +119,14 @@ class BaseCodegen:
             return self._emit_wmma_mma(node)
         elif isinstance(node, IRWmmaStore):
             return self._emit_wmma_store(node)
+        elif isinstance(node, IRMfmaOp):
+            return self._emit_mfma_op(node)
+        elif isinstance(node, IRUnpackInt4):
+            return self._emit_unpack_int4(node)
+        elif isinstance(node, IRUnpackUint4):
+            return self._emit_unpack_uint4(node)
+        elif isinstance(node, IRLocalArrayDecl):
+            return self._emit_local_array_decl(node)
         else:
             # Expression statement
             return self._emit_expr(node) + ";"
@@ -184,6 +200,8 @@ class BaseCodegen:
             return self._emit_float_to_half(node)
         elif isinstance(node, IRDynamicSharedMemDecl):
             return node.name or "_zse_dsmem"
+        elif isinstance(node, IRReinterpret):
+            return self._emit_reinterpret(node)
         else:
             raise ValueError(f"Cannot emit expression for {type(node).__name__}")
 
@@ -196,6 +214,11 @@ class BaseCodegen:
         value = self._emit_expr(node.value)
         if node.name not in self._local_vars:
             self._local_vars.add(node.name)
+            # Special case: RHS is a pointer reinterpret — emit explicit pointer type
+            # so Metal (which lacks `auto`) and code clarity both work.
+            if isinstance(node.value, IRReinterpret):
+                ptr_type = self._reinterpret_lhs_type(node.value.dtype)
+                return f"{ptr_type} {node.name} = {value};"
             # Use inferred type if available, fall back to annotation or auto
             inferred = self._var_types.get(node.name)
             if inferred:
@@ -207,6 +230,29 @@ class BaseCodegen:
             return f"{dtype} {node.name} = {value};"
         return f"{node.name} = {value};"
 
+    def _reinterpret_lhs_type(self, dtype: str) -> str:
+        """LHS pointer type for `auto`-less backends. Override in Metal."""
+        from zse_compiler.types.dtypes import DTYPE_MAP
+        if dtype in DTYPE_MAP:
+            return f"{DTYPE_MAP[dtype].cuda_type}*"
+        return "auto"
+
+    def _emit_local_array_decl(self, node) -> str:
+        """Per-thread local-scope array — stack-allocated; CUDA/HIP ptxas
+        promotes small fully-unrolled arrays to registers."""
+        from zse_compiler.types.dtypes import DTYPE_MAP
+        ctype = DTYPE_MAP[node.dtype].cuda_type if node.dtype in DTYPE_MAP else "float"
+        self._local_vars.add(node.name)
+        return f"{ctype} {node.name}[{node.size}];"
+
+    def _emit_reinterpret(self, node) -> str:
+        """Pointer reinterpret cast — `((T*)(operand))`. Override in Metal
+        to preserve `device` address space."""
+        from zse_compiler.types.dtypes import DTYPE_MAP
+        ctype = DTYPE_MAP[node.dtype].cuda_type if node.dtype in DTYPE_MAP else "float"
+        operand = self._emit_expr(node.operand)
+        return f"(({ctype}*)({operand}))"
+
     def _map_type(self, t: str) -> str:
         """Map abstract type to C type. Override in backends for specifics."""
         mapping = {
@@ -216,7 +262,14 @@ class BaseCodegen:
             "float4": "float4",
             "half2": "half2",
         }
-        return mapping.get(t, self._default_var_type())
+        if t in mapping:
+            return mapping[t]
+        # Fall through to DTYPE_MAP for explicit dtype names like
+        # "int32", "uint32", "int16", "uint16", "int8", "uint8", "float16", "bfloat16".
+        from zse_compiler.types.dtypes import DTYPE_MAP
+        if t in DTYPE_MAP:
+            return DTYPE_MAP[t].cuda_type
+        return self._default_var_type()
 
     def _default_var_type(self) -> str:
         """Default type for untyped variables. CUDA/HIP use auto, Metal uses float."""
@@ -397,6 +450,14 @@ class BaseCodegen:
 
     def _emit_wmma_store(self, node) -> str:
         raise NotImplementedError
+
+    # --- AMD CDNA MFMA (must override in backends that support it) ---
+
+    def _emit_mfma_op(self, node) -> str:
+        raise NotImplementedError(
+            f"MFMA ({node.shape}) is an AMD CDNA matrix-core intrinsic; "
+            f"only the ROCm backend supports it. Use wmma_* primitives for NVIDIA / Metal."
+        )
 
     # --- FP16 Conversion (must override) ---
 

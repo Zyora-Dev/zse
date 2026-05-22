@@ -4,11 +4,59 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zse-compiler"
-version = "0.1.0"
-description = "Pure Python GPU Kernel Compiler — CUDA, ROCm, Metal. Zero dependencies."
-requires-python = ">=3.10"
+version = "2.0.0"
+description = "Pure-Python GPU kernel compiler. Write kernels in Python, target CUDA, ROCm (HIP), and Metal. Zero dependencies."
+readme = "../README.md"
+requires-python = ">=3.11"
 license = {text = "Apache-2.0"}
-dependencies = []  # ZERO dependencies — this is the whole point
+authors = [
+    {name = "Zyora Labs", email = "zse@zyoralabs.com"},
+]
+keywords = [
+    "gpu",
+    "kernel",
+    "compiler",
+    "cuda",
+    "rocm",
+    "hip",
+    "metal",
+    "nvrtc",
+    "hiprtc",
+    "wmma",
+    "mfma",
+    "tensor-core",
+    "matrix-core",
+    "no-triton",
+    "no-pytorch",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Compilers",
+    "Topic :: Software Development :: Code Generators",
+    "Environment :: GPU :: NVIDIA CUDA",
+]
+# ZERO dependencies — pure Python + ctypes. This is the whole point.
+dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+
+[project.urls]
+Homepage = "https://zllm.in"
+Repository = "https://github.com/Zyora-Dev/zse"
+Documentation = "https://github.com/Zyora-Dev/zse/tree/main/zse-compiler"
+Changelog = "https://github.com/Zyora-Dev/zse/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Zyora-Dev/zse/issues"
+
+[tool.setuptools.packages.find]
+include = ["zse_compiler*"]

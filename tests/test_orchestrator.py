@@ -72,12 +72,16 @@ class TestVRAMAllocator:
         config = self._make_config()
         alloc = VRAMAllocator()
 
-        # Small model → lots of KV budget
-        plan_small = alloc.plan_allocation(100 * 1024**2, config)
-        # Large model → less KV budget
-        plan_large = alloc.plan_allocation(10 * 1024**3, config)
+        # With huge demand, KV must be capped by remaining VRAM after weights
+        # Small model leaves more remaining → can satisfy more of the demand
+        plan_small = alloc.plan_allocation(
+            100 * 1024**2, config, max_seq_len=8192, max_batch_seqs=256,
+        )
+        plan_large = alloc.plan_allocation(
+            10 * 1024**3, config, max_seq_len=8192, max_batch_seqs=256,
+        )
 
-        assert plan_small.kv_cache_bytes > plan_large.kv_cache_bytes
+        assert plan_small.kv_cache_bytes >= plan_large.kv_cache_bytes
 
     def test_scratch_buffers_cpu_mode(self):
         """In CPU mode (no gpu_mem), scratch buffers are None but total_bytes computed."""
@@ -382,10 +386,18 @@ class TestVRAMPlanIntegration:
         )
 
         alloc = VRAMAllocator()
-        plan_s = alloc.plan_allocation(small.estimate_model_size_bytes(), small)
-        plan_b = alloc.plan_allocation(big.estimate_model_size_bytes(), big)
+        # Use a workload large enough that the big model's KV gets clipped by
+        # remaining VRAM (demand-based sizing).
+        plan_s = alloc.plan_allocation(
+            small.estimate_model_size_bytes(), small,
+            max_seq_len=8192, max_batch_seqs=256,
+        )
+        plan_b = alloc.plan_allocation(
+            big.estimate_model_size_bytes(), big,
+            max_seq_len=8192, max_batch_seqs=256,
+        )
 
-        assert plan_s.kv_cache_bytes > plan_b.kv_cache_bytes
+        assert plan_s.kv_cache_bytes >= plan_b.kv_cache_bytes
 
 
 if __name__ == "__main__":

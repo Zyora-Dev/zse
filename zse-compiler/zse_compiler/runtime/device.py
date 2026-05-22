@@ -258,16 +258,35 @@ def _has_metal() -> bool:
 
 
 def _get_metal_devices() -> List[DeviceInfo]:
-    """Detect Metal devices on macOS."""
+    """Detect Metal devices on macOS.
+
+    Uses the Metal ObjC bridge for the real device name + recommendedMaxWorkingSetSize.
+    Falls back to a generic entry if the bridge isn't available yet (e.g. clang
+    missing on first run).
+    """
     if not _has_metal():
         return []
 
-    # Metal detection requires Objective-C bridge or subprocess
-    # For now, basic detection on macOS
+    name = "Apple GPU"
+    vram_bytes = 0
+    try:
+        from zse_compiler.runtime.metal_dispatch import MetalRuntime
+        rt = MetalRuntime()
+        name = rt.device_name or "Apple GPU"
+        vram_bytes = int(rt.device_memory_bytes or 0)
+    except Exception:
+        # Bridge unavailable (e.g. no clang yet). Keep generic entry.
+        pass
+
+    # Apple Silicon uses unified memory: total == free for our purposes.
     devices = [DeviceInfo(
         backend="metal",
-        name="Apple GPU",
+        name=name,
         index=0,
         warp_size=32,  # Apple calls these "SIMD groups", width=32
+        vram_total_bytes=vram_bytes,
+        vram_free_bytes=vram_bytes,
+        max_threads_per_block=1024,
+        max_shared_memory_bytes=32768,  # 32KB threadgroup memory on Apple7+
     )]
     return devices

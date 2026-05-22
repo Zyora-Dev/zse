@@ -7,11 +7,13 @@ Provides a clean API for the HTTP layer and chat integration.
 
 import base64
 import json
-from typing import List, Optional, Dict, Any, Set
+from typing import List, Optional, Dict, Any, Set, Tuple
 
 from zse_engine.rag.parser import get_parser, Chunk
 from zse_engine.rag.embeddings import TokenEmbedder
 from zse_engine.rag.store import RAGStore, SearchResult, StoredDocument
+from zse_engine.rag.dense_embedder import DenseEmbedder, dense_cosine
+from zse_engine.rag.reranker import LLMReranker
 
 
 class RAGEngine:
@@ -59,8 +61,54 @@ class RAGEngine:
         self._docs_since_reembed = 0
         self._reembed_threshold = 10  # Re-embed after every N new documents
 
+        # Dense + rerank — opt-in, wired post-init via set_model_runner()
+        self._dense_embedder: Optional[DenseEmbedder] = None
+        self._reranker: Optional[LLMReranker] = None
+        self._dense_enabled_by_default = False
+
         # Rebuild IDF + inverted index + BM25 from existing documents
         self._rebuild_all()
+
+    # ------------------------------------------------------------------
+    # Modern RAG: dense embeddings + LLM reranker (zero extra deps)
+    # ------------------------------------------------------------------
+
+    def set_model_runner(self, model_runner, enable_dense_by_default: bool = True):
+        """Wire the inference LLM into RAG for dense embeddings + reranking.
+
+        After this call, search(use_dense=True, use_rerank=True) becomes valid.
+        Re-embedding of existing chunks happens lazily on first search.
+        """
+        if model_runner is None or self._tokenizer is None:
+            return
+        try:
+            self._dense_embedder = DenseEmbedder(model_runner, self._tokenizer)
+            self._reranker = LLMReranker(model_runner, self._tokenizer)
+            self._dense_enabled_by_default = enable_dense_by_default
+        except Exception:
+            self._dense_embedder = None
+            self._reranker = None
+
+    def has_dense(self) -> bool:
+        return self._dense_embedder is not None
+
+    def backfill_dense_embeddings(self, batch_size: int = 32) -> int:
+        """Compute dense vectors for any chunks that don't have one. Returns count."""
+        if self._dense_embedder is None:
+            return 0
+        missing = self._store.all_chunk_ids_missing_dense()
+        if not missing:
+            return 0
+        done = 0
+        for cid in missing:
+            text = self._store.get_chunk_text(cid)
+            if not text:
+                continue
+            vec = self._dense_embedder.embed(text)
+            if vec is not None:
+                self._store.set_dense_vector(cid, vec)
+                done += 1
+        return done
 
     def _rebuild_all(self):
         """Rebuild IDF weights, inverted index, and BM25 from all stored documents."""
@@ -87,6 +135,8 @@ class RAGEngine:
         content: bytes,
         chunk_size: Optional[int] = None,
         overlap: Optional[int] = None,
+        pdf_password: Optional[str] = None,
+        ocr_fn=None,
     ) -> Dict[str, Any]:
         """Ingest a document: parse, compress, embed, store.
 
@@ -95,6 +145,11 @@ class RAGEngine:
             content: Raw file content as bytes
             chunk_size: Override default chunk size
             overlap: Override default overlap
+            pdf_password: Optional non-empty user password for encrypted PDFs
+            ocr_fn: Optional ``ocr_fn(image_bytes, format_hint) -> str``
+                callable invoked when a PDF yields no extractable text.
+                The user supplies the OCR backend (pytesseract, EasyOCR,
+                cloud API); ZSE itself remains zero-dep.
 
         Returns:
             Dict with doc_id, chunk_count, token savings, etc.
@@ -110,9 +165,12 @@ class RAGEngine:
 
         # Parse into chunks
         parser = get_parser(filename, chunk_size=cs, overlap=ov)
-        chunks = parser.parse(text, tokenizer=self._tokenizer, metadata={
-            "source": filename,
-        })
+        parse_meta: Dict[str, Any] = {"source": filename}
+        if pdf_password:
+            parse_meta["pdf_password"] = pdf_password
+        if ocr_fn is not None:
+            parse_meta["ocr_fn"] = ocr_fn
+        chunks = parser.parse(text, tokenizer=self._tokenizer, metadata=parse_meta)
 
         if not chunks:
             return {"error": "No content could be extracted from the document"}
@@ -147,6 +205,13 @@ class RAGEngine:
         for sc in stored_chunks:
             self._embedder.add_to_bm25(sc.content, sc.id)
 
+        # Dense embeddings (if model_runner wired)
+        if self._dense_embedder is not None:
+            for sc in stored_chunks:
+                vec = self._dense_embedder.embed(sc.content)
+                if vec is not None:
+                    self._store.set_dense_vector(sc.id, vec)
+
         # Check if we need to re-embed existing docs (IDF drift)
         self._docs_since_reembed += 1
         if self._docs_since_reembed >= self._reembed_threshold:
@@ -175,50 +240,108 @@ class RAGEngine:
     # Search
     # ------------------------------------------------------------------
 
-    def search(self, query: str, top_k: int = 5, filters: Optional[Dict] = None) -> List[Dict[str, Any]]:
-        """Hybrid search for relevant chunks (TF-IDF cosine + BM25).
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        filters: Optional[Dict] = None,
+        use_dense: Optional[bool] = None,
+        use_rerank: bool = False,
+        candidate_pool: int = 30,
+        fusion: str = "rrf",
+    ) -> List[Dict[str, Any]]:
+        """Hybrid search with optional dense retrieval and LLM reranking.
 
-        Uses inverted index for fast candidate retrieval, then scores
-        candidates with both cosine similarity and BM25.
+        Pipeline:
+          1. BM25 + TF-IDF cosine (sparse) over inverted-index candidates
+          2. If dense enabled: dense cosine over the union of candidates +
+             top BM25 / sparse results
+          3. Fuse rankings via Reciprocal Rank Fusion (or weighted-sum if
+             fusion="weighted") to produce top `candidate_pool` results
+          4. If use_rerank: LLM cross-encoder rerank top `candidate_pool` \u2192 top_k
 
         Args:
             query: Search query text
-            top_k: Number of results to return
+            top_k: Final number of results
             filters: Optional metadata filters {doc_type, doc_name, doc_id}
-
-        Returns:
-            List of dicts with chunk content, score, doc info
+            use_dense: Force dense on/off (None = auto if model_runner wired)
+            use_rerank: Run LLM cross-encoder rerank on the candidate pool
+            candidate_pool: Initial candidate count before rerank (>=top_k)
+            fusion: 'rrf' (Reciprocal Rank Fusion, default) or 'weighted'
         """
-        # Get candidates from inverted index
+        if use_dense is None:
+            use_dense = self._dense_enabled_by_default and self._dense_embedder is not None
+        elif use_dense and self._dense_embedder is None:
+            use_dense = False  # Not wired \u2014 silently fall back
+
+        # ---- 1. Candidate pruning via inverted index ----
         query_tokens = self._embedder._tokenize(query)
         query_token_set = set(query_tokens)
         candidate_ids = self._store._inverted.candidates(query_token_set)
-
-        # If inverted index is empty (no index built), fall back to None (full scan)
         if not candidate_ids and self._store._inverted.token_count == 0:
             candidate_ids = None
 
-        # BM25 scores
+        # ---- 2. Sparse signals: BM25 + TF-IDF cosine ----
         bm25_scores = self._embedder.bm25_search(query)
-
-        # If BM25 found results not in cosine candidates, add them
         if candidate_ids is not None and bm25_scores:
             candidate_ids = candidate_ids | set(bm25_scores.keys())
-
-        # Apply metadata filters to narrow candidates
         if filters:
             candidate_ids = self._apply_filters(candidate_ids, filters)
 
-        # Embed query for cosine similarity
         query_emb = self._embedder.embed(query)
-
-        # Hybrid search
-        results = self._store.search(
-            query_emb, top_k=top_k,
+        # Pull a larger pool than top_k so rerank / fusion has signal
+        sparse_pool = max(candidate_pool, top_k * 4)
+        sparse_results = self._store.search(
+            query_emb, top_k=sparse_pool,
             candidate_ids=candidate_ids,
             bm25_scores=bm25_scores,
             bm25_weight=self._bm25_weight,
         )
+
+        # ---- 3. Dense signal (optional) ----
+        dense_scores: Dict[int, float] = {}
+        if use_dense:
+            qvec = self._dense_embedder.embed_query(query)
+            if qvec:
+                # Score the union of (sparse pool, BM25 hits)
+                cand_ids = {r.chunk.id for r in sparse_results}
+                cand_ids |= set(bm25_scores.keys())
+                # Filter to chunks that actually have a stored dense vector
+                doc_vecs = self._store.get_dense_vectors(cand_ids)
+                for cid, dvec in doc_vecs.items():
+                    dense_scores[cid] = dense_cosine(qvec, dvec)
+                # Backfill any high-BM25 candidates missing dense vectors
+                if self._dense_embedder is not None:
+                    missing = [c for c in cand_ids if c not in doc_vecs]
+                    for cid in missing[:8]:  # cap to bound latency
+                        text = self._store.get_chunk_text(cid)
+                        if not text:
+                            continue
+                        vec = self._dense_embedder.embed(text)
+                        if vec is not None:
+                            self._store.set_dense_vector(cid, vec)
+                            dense_scores[cid] = dense_cosine(qvec, vec)
+
+        # ---- 4. Fuse rankings ----
+        fused = self._fuse(
+            sparse_results=sparse_results,
+            bm25_scores=bm25_scores,
+            dense_scores=dense_scores,
+            mode=fusion,
+            top_n=max(candidate_pool, top_k),
+        )
+
+        # ---- 5. LLM cross-encoder rerank (optional, expensive) ----
+        rerank_scores: Dict[int, float] = {}
+        if use_rerank and self._reranker is not None and fused:
+            pairs = [(r.chunk.id, r.chunk.content) for r in fused[:candidate_pool]]
+            rerank_out = self._reranker.rerank(query, pairs, top_n=len(pairs))
+            rerank_scores = {cid: s for cid, s in rerank_out}
+            # Sort fused by rerank score (descending)
+            fused.sort(key=lambda r: rerank_scores.get(r.chunk.id, -1e9), reverse=True)
+            for r in fused:
+                if r.chunk.id in rerank_scores:
+                    r.rerank_score = rerank_scores[r.chunk.id]
 
         return [
             {
@@ -227,13 +350,77 @@ class RAGEngine:
                 "score": round(r.score, 4),
                 "cosine_score": round(r.cosine_score, 4),
                 "bm25_score": round(r.bm25_score, 4),
+                "dense_score": round(dense_scores.get(r.chunk.id, 0.0), 4),
+                "rerank_score": (round(r.rerank_score, 4)
+                                  if r.rerank_score is not None else None),
                 "doc_name": r.doc_name,
                 "doc_id": r.chunk.doc_id,
                 "chunk_index": r.chunk.chunk_index,
                 "token_count": r.chunk.token_count,
             }
-            for r in results
+            for r in fused[:top_k]
         ]
+
+    def _fuse(
+        self,
+        sparse_results: List[SearchResult],
+        bm25_scores: Dict[int, float],
+        dense_scores: Dict[int, float],
+        mode: str = "rrf",
+        top_n: int = 20,
+        rrf_k: int = 60,
+    ) -> List[SearchResult]:
+        """Combine sparse + dense rankings.
+
+        - 'rrf' (default): Reciprocal Rank Fusion \u2014 industry standard, robust
+          to score scale differences. score = sum(1 / (k + rank_i)).
+        - 'weighted': sparse score blended with normalized dense score.
+        """
+        # Build per-list rankings (rank starts at 0)
+        sparse_rank: Dict[int, int] = {
+            r.chunk.id: i for i, r in enumerate(sparse_results)
+        }
+        # BM25-only ranking (descending score)
+        bm25_sorted = sorted(bm25_scores.items(), key=lambda x: x[1], reverse=True)
+        bm25_rank: Dict[int, int] = {cid: i for i, (cid, _) in enumerate(bm25_sorted)}
+        # Dense ranking
+        dense_sorted = sorted(dense_scores.items(), key=lambda x: x[1], reverse=True)
+        dense_rank: Dict[int, int] = {cid: i for i, (cid, _) in enumerate(dense_sorted)}
+
+        # Universe of candidates = union of all sources
+        candidates: Dict[int, SearchResult] = {r.chunk.id: r for r in sparse_results}
+        # (Sparse pool already includes BM25 contributors via store.search)
+
+        if mode == "rrf":
+            fused_scores: Dict[int, float] = {}
+            for cid in candidates:
+                s = 0.0
+                if cid in sparse_rank:
+                    s += 1.0 / (rrf_k + sparse_rank[cid] + 1)
+                if cid in bm25_rank:
+                    s += 1.0 / (rrf_k + bm25_rank[cid] + 1)
+                if cid in dense_rank:
+                    s += 1.0 / (rrf_k + dense_rank[cid] + 1)
+                fused_scores[cid] = s
+            for cid, sr in candidates.items():
+                sr.score = fused_scores.get(cid, 0.0)
+                sr.dense_score = dense_scores.get(cid, 0.0)
+        else:
+            # weighted: blend existing hybrid score (already in sr.score) with
+            # normalized dense. Dense is in [-1,1] (cosine on unit vectors).
+            max_dense = max(dense_scores.values()) if dense_scores else 1.0
+            if max_dense <= 0:
+                max_dense = 1.0
+            dense_w = 0.4 if dense_scores else 0.0
+            for cid, sr in candidates.items():
+                d = dense_scores.get(cid, 0.0) / max_dense
+                sr.dense_score = dense_scores.get(cid, 0.0)
+                sr.score = (1 - dense_w) * sr.score + dense_w * max(d, 0.0)
+
+        fused = list(candidates.values())
+        fused.sort(key=lambda r: r.score, reverse=True)
+        return fused[:top_n]
+
 
     def _apply_filters(self, candidate_ids: Optional[set], filters: Dict) -> Optional[set]:
         """Apply metadata filters to narrow candidate chunks."""

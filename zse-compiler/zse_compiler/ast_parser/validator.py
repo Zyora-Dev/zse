@@ -40,6 +40,12 @@ ALLOWED_CALLS = {
     "load_float4", "store_float4", "load_half2", "store_half2",
     # Tiling
     "tile_load", "tile_store",
+    # INT4 / UINT4 unpack intrinsics (Tier-2 / Tier-2.5)
+    "unpack_int4", "unpack_uint4",
+    # Local register array + pointer reinterpret (Tier-3)
+    "local_array", "reinterpret",
+    # AMD CDNA MFMA matrix cores (Tier-4)
+    "mfma_f32_16x16x16_f16", "mfma_f32_32x32x8_f16",
 }
 
 # Also allow all the above with "zse." prefix

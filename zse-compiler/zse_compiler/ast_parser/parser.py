@@ -34,10 +34,17 @@ from zse_compiler.ir.nodes import (
     IRTileLoad, IRTileStore,
     # WMMA
     IRWmmaLoadA, IRWmmaLoadB, IRWmmaFill, IRWmmaMMA, IRWmmaStore,
+    # CDNA MFMA (Tier-4)
+    IRMfmaOp,
     # FP16
     IRHalfToFloat, IRFloatToHalf,
     # Dynamic shared memory
     IRDynamicSharedMemDecl,
+    # INT4 unpack
+    IRUnpackInt4,
+    IRUnpackUint4,
+    IRLocalArrayDecl,
+    IRReinterpret,
 )
 from zse_compiler.types.primitives import PRIMITIVE_FUNCTIONS
 from zse_compiler.types.dtypes import DType, DTYPE_MAP
@@ -153,6 +160,20 @@ class KernelParser:
             if isinstance(value, IRDynamicSharedMemDecl):
                 value.name = target.id
                 return value
+            # Special case: static shared memory → set name on decl, return directly
+            if isinstance(value, IRSharedMemDecl):
+                value.name = target.id
+                self._var_types[target.id] = "ptr"
+                return value
+            # Special case: local register array → set name on decl, return directly
+            if isinstance(value, IRLocalArrayDecl):
+                value.name = target.id
+                self._var_types[target.id] = "ptr"
+                return value
+            # Special case: pointer reinterpret → mark var as pointer for type emit
+            if isinstance(value, IRReinterpret):
+                self._var_types[target.id] = "ptr"
+                return IRAssign(name=target.id, value=value)
             # x = expr → Assign
             self._var_types[target.id] = "auto"
             return IRAssign(name=target.id, value=value)
@@ -390,7 +411,11 @@ class KernelParser:
             tc = self._parse_expr(node.args[2])
             ts = self._parse_expr(node.args[3])
             sbuf = self._parse_expr(node.args[4]) if len(node.args) > 4 else None
-            return IRTileLoad(tensor=tensor, tile_row=tr, tile_col=tc, tile_size=ts, shared_buf=sbuf)
+            br = self._parse_expr(node.args[5]) if len(node.args) > 5 else None
+            bc = self._parse_expr(node.args[6]) if len(node.args) > 6 else None
+            return IRTileLoad(tensor=tensor, tile_row=tr, tile_col=tc,
+                              tile_size=ts, shared_buf=sbuf,
+                              bound_row=br, bound_col=bc)
 
         elif func_name in ("tile_store", "zse.tile_store"):
             sbuf = self._parse_expr(node.args[0])
@@ -398,7 +423,11 @@ class KernelParser:
             tr = self._parse_expr(node.args[2])
             tc = self._parse_expr(node.args[3])
             ts = self._parse_expr(node.args[4])
-            return IRTileStore(shared_buf=sbuf, tensor=tensor, tile_row=tr, tile_col=tc, tile_size=ts)
+            br = self._parse_expr(node.args[5]) if len(node.args) > 5 else None
+            bc = self._parse_expr(node.args[6]) if len(node.args) > 6 else None
+            return IRTileStore(shared_buf=sbuf, tensor=tensor, tile_row=tr,
+                               tile_col=tc, tile_size=ts,
+                               bound_row=br, bound_col=bc)
 
         # --- WMMA / Tensor Core ---
 
@@ -434,6 +463,42 @@ class KernelParser:
             frag = self._parse_expr(node.args[4]) if len(node.args) > 4 else IRVar(name="_frag_c")
             return IRWmmaStore(tensor=tensor, row=row, col=col, stride=stride, frag=frag)
 
+        # --- AMD CDNA MFMA (Tier-4) ---
+
+        elif func_name in ("mfma_f32_16x16x16_f16", "zse.mfma_f32_16x16x16_f16"):
+            if len(node.args) != 3:
+                raise SyntaxError("mfma_f32_16x16x16_f16 requires 3 args: (a_buf, b_buf, c_buf)")
+            a = self._parse_expr(node.args[0])
+            b = self._parse_expr(node.args[1])
+            c = self._parse_expr(node.args[2])
+            return IRMfmaOp(a_buf=a, b_buf=b, c_buf=c, shape="16x16x16_f16")
+
+        elif func_name in ("mfma_f32_32x32x8_f16", "zse.mfma_f32_32x32x8_f16"):
+            if len(node.args) != 3:
+                raise SyntaxError("mfma_f32_32x32x8_f16 requires 3 args: (a_buf, b_buf, c_buf)")
+            a = self._parse_expr(node.args[0])
+            b = self._parse_expr(node.args[1])
+            c = self._parse_expr(node.args[2])
+            return IRMfmaOp(a_buf=a, b_buf=b, c_buf=c, shape="32x32x8_f16")
+
+        # --- INT4 nibble unpack (Tier-2) ---
+
+        elif func_name in ("unpack_int4", "zse.unpack_int4"):
+            if len(node.args) != 3:
+                raise SyntaxError("unpack_int4 requires 3 args: (packed_u32, out_buf, base_idx)")
+            packed = self._parse_expr(node.args[0])
+            out_buf = self._parse_expr(node.args[1])
+            base_idx = self._parse_expr(node.args[2])
+            return IRUnpackInt4(packed=packed, out_buf=out_buf, base_idx=base_idx)
+
+        elif func_name in ("unpack_uint4", "zse.unpack_uint4"):
+            if len(node.args) != 3:
+                raise SyntaxError("unpack_uint4 requires 3 args: (packed_u32, out_buf, base_idx)")
+            packed = self._parse_expr(node.args[0])
+            out_buf = self._parse_expr(node.args[1])
+            base_idx = self._parse_expr(node.args[2])
+            return IRUnpackUint4(packed=packed, out_buf=out_buf, base_idx=base_idx)
+
         elif func_name.split(".")[-1] in ("exp", "log", "sqrt", "rsqrt", "max_val", "min_val", "fma", "pow", "cos", "sin"):
             math_name = func_name.split(".")[-1]
             args = [self._parse_expr(a) for a in node.args]
@@ -460,6 +525,26 @@ class KernelParser:
         # Dynamic shared memory
         elif func_name in ("dynamic_shared_memory", "zse.dynamic_shared_memory"):
             return self._parse_dynamic_shared_memory(node)
+
+        # Local register array — buf = zse.local_array(8, zse.int32)
+        elif func_name in ("local_array", "zse.local_array"):
+            if len(node.args) < 1:
+                raise SyntaxError("local_array requires at least 1 arg: (size, dtype=)")
+            size_node = node.args[0]
+            if not isinstance(size_node, ast.Constant) or not isinstance(size_node.value, int):
+                raise SyntaxError("local_array size must be an integer literal")
+            dtype = "float32"
+            if len(node.args) >= 2:
+                dtype = self._resolve_annotation(node.args[1])
+            return IRLocalArrayDecl(name="", size=size_node.value, dtype=dtype)
+
+        # Pointer reinterpret — qp = zse.reinterpret(weights, zse.uint32)
+        elif func_name in ("reinterpret", "zse.reinterpret"):
+            if len(node.args) != 2:
+                raise SyntaxError("reinterpret requires 2 args: (pointer, dtype)")
+            operand = self._parse_expr(node.args[0])
+            dtype = self._resolve_annotation(node.args[1])
+            return IRReinterpret(operand=operand, dtype=dtype)
 
         elif func_name == "range":
             # Special — handled by for-loop parser

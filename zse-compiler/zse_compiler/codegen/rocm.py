@@ -13,6 +13,8 @@ from zse_compiler.ir.nodes import (
     IRWarpShuffle, IRWarpVote, IRWarpReduce, IRBlockReduce,
     IRLoadFloat4, IRStoreFloat4, IRLoadHalf2, IRStoreHalf2,
     IRTileLoad, IRTileStore, IRConst,
+    IRUnpackInt4, IRUnpackUint4,
+    IRMfmaOp,
 )
 from zse_compiler.types.dtypes import DTYPE_MAP
 
@@ -46,6 +48,20 @@ SHUFFLE_OFFSETS = [32, 16, 8, 4, 2, 1]
 class ROCmCodegen(BaseCodegen):
     """Generates HIP C kernel source code from ZSE IR."""
 
+    def __init__(self):
+        super().__init__()
+        self._block_reduce_counter = 0
+        self._unpack_int4_counter = 0
+        self._unpack_uint4_counter = 0
+        self._mfma_counter = 0
+
+    def generate(self, func):
+        self._block_reduce_counter = 0
+        self._unpack_int4_counter = 0
+        self._unpack_uint4_counter = 0
+        self._mfma_counter = 0
+        return super().generate(func)
+
     def _emit_header(self) -> str:
         return '#include <hip/hip_runtime.h>\n\nextern "C" {'
 
@@ -57,16 +73,24 @@ class ROCmCodegen(BaseCodegen):
         return f"__global__ void {func.name}({params})"
 
     def _param_to_str(self, param: IRParam) -> str:
-        if param.dtype in ("tensor", "Tensor"):
+        if param.dtype in ("tensor", "Tensor", "fp32_tensor", "float32_tensor"):
             return f"float* __restrict__ {param.name}"
-        elif param.dtype in ("half_tensor", "fp16_tensor"):
+        elif param.dtype in ("half_tensor", "fp16_tensor", "float16_tensor"):
             return f"half* __restrict__ {param.name}"
+        elif param.dtype in ("bf16_tensor", "bfloat16_tensor"):
+            return f"hip_bfloat16* __restrict__ {param.name}"
         elif param.dtype == "uint8_tensor":
             return f"unsigned char* __restrict__ {param.name}"
         elif param.dtype == "int8_tensor":
             return f"signed char* __restrict__ {param.name}"
+        elif param.dtype == "uint16_tensor":
+            return f"unsigned short* __restrict__ {param.name}"
+        elif param.dtype == "int16_tensor":
+            return f"short* __restrict__ {param.name}"
         elif param.dtype == "int32_tensor":
             return f"int* __restrict__ {param.name}"
+        elif param.dtype == "uint32_tensor":
+            return f"unsigned int* __restrict__ {param.name}"
         elif param.dtype in DTYPE_MAP:
             return f"{DTYPE_MAP[param.dtype].hip_type}* __restrict__ {param.name}"
         elif param.dtype == "int":
@@ -187,22 +211,28 @@ class ROCmCodegen(BaseCodegen):
         val = self._emit_expr(node.value)
         combine = REDUCE_OPS[node.op]
         identity = {"sum": "0.0f", "max": "-INFINITY", "min": "INFINITY"}[node.op]
-        var = f"_zse_br_{id(node) % 10000}"
+        self._block_reduce_counter += 1
+        cid = self._block_reduce_counter
+        var = f"_zse_br_{cid}"
+        bsmem = f"_zse_bsmem_{cid}"
+        lid = f"_zse_lid_{cid}"
+        wid = f"_zse_wid_{cid}"
+        nwarps_v = f"_zse_nwarps_{cid}"
         nwarps = 16  # max 1024 threads / 64 wavefront = 16 wavefronts
 
         lines = []
         lines.append(f"[&]() {{")
-        lines.append(f"  __shared__ float _zse_bsmem[{nwarps}];")
+        lines.append(f"  __shared__ float {bsmem}[{nwarps}];")
         lines.append(f"  float {var} = {val};")
         for offset in SHUFFLE_OFFSETS:
             shfl = f"__shfl_xor({var}, {offset}, {WARP_SIZE})"
             lines.append(f"  {var} = {combine(var, shfl)};")
-        lines.append(f"  int _zse_lid = threadIdx.x % {WARP_SIZE};")
-        lines.append(f"  int _zse_wid = threadIdx.x / {WARP_SIZE};")
-        lines.append(f"  if (_zse_lid == 0) _zse_bsmem[_zse_wid] = {var};")
+        lines.append(f"  int {lid} = threadIdx.x % {WARP_SIZE};")
+        lines.append(f"  int {wid} = threadIdx.x / {WARP_SIZE};")
+        lines.append(f"  if ({lid} == 0) {bsmem}[{wid}] = {var};")
         lines.append(f"  __syncthreads();")
-        lines.append(f"  int _zse_nwarps = (blockDim.x + {WARP_SIZE - 1}) / {WARP_SIZE};")
-        lines.append(f"  {var} = (_zse_lid < _zse_nwarps) ? _zse_bsmem[_zse_lid] : {identity};")
+        lines.append(f"  int {nwarps_v} = (blockDim.x + {WARP_SIZE - 1}) / {WARP_SIZE};")
+        lines.append(f"  {var} = ({lid} < {nwarps_v}) ? {bsmem}[{lid}] : {identity};")
         for offset in SHUFFLE_OFFSETS:
             shfl = f"__shfl_xor({var}, {offset}, {WARP_SIZE})"
             lines.append(f"  {var} = {combine(var, shfl)};")
@@ -246,8 +276,17 @@ class ROCmCodegen(BaseCodegen):
         ts = self._emit_expr(node.tile_size)
         sbuf = self._emit_expr(node.shared_buf) if node.shared_buf else "_zse_tile"
         lines = []
-        lines.append(f"{sbuf}[threadIdx.y * {ts} + threadIdx.x] = "
-                      f"{tensor}[({tr} + threadIdx.y) * {ts} + ({tc} + threadIdx.x)];")
+        if node.bound_row is not None and node.bound_col is not None:
+            br = self._emit_expr(node.bound_row)
+            bc = self._emit_expr(node.bound_col)
+            lines.append(f"{{ int _zse_gr = ({tr}) + threadIdx.y;")
+            lines.append(f"  int _zse_gc = ({tc}) + threadIdx.x;")
+            lines.append(f"  {sbuf}[threadIdx.y * {ts} + threadIdx.x] = "
+                          f"(_zse_gr < ({br}) && _zse_gc < ({bc})) ? "
+                          f"{tensor}[_zse_gr * ({bc}) + _zse_gc] : 0.0f; }}")
+        else:
+            lines.append(f"{sbuf}[threadIdx.y * {ts} + threadIdx.x] = "
+                          f"{tensor}[({tr} + threadIdx.y) * {ts} + ({tc} + threadIdx.x)];")
         lines.append(f"__syncthreads();")
         return "\n".join(self._indented(l) for l in lines)
 
@@ -258,8 +297,17 @@ class ROCmCodegen(BaseCodegen):
         ts = self._emit_expr(node.tile_size)
         sbuf = self._emit_expr(node.shared_buf)
         lines = []
-        lines.append(f"{tensor}[({tr} + threadIdx.y) * {ts} + ({tc} + threadIdx.x)] = "
-                      f"{sbuf}[threadIdx.y * {ts} + threadIdx.x];")
+        if node.bound_row is not None and node.bound_col is not None:
+            br = self._emit_expr(node.bound_row)
+            bc = self._emit_expr(node.bound_col)
+            lines.append(f"{{ int _zse_gr = ({tr}) + threadIdx.y;")
+            lines.append(f"  int _zse_gc = ({tc}) + threadIdx.x;")
+            lines.append(f"  if (_zse_gr < ({br}) && _zse_gc < ({bc})) "
+                          f"{tensor}[_zse_gr * ({bc}) + _zse_gc] = "
+                          f"{sbuf}[threadIdx.y * {ts} + threadIdx.x]; }}")
+        else:
+            lines.append(f"{tensor}[({tr} + threadIdx.y) * {ts} + ({tc} + threadIdx.x)] = "
+                          f"{sbuf}[threadIdx.y * {ts} + threadIdx.x];")
         lines.append(f"__syncthreads();")
         return "\n".join(self._indented(l) for l in lines)
 
@@ -273,6 +321,45 @@ class ROCmCodegen(BaseCodegen):
         val = self._emit_expr(node.value)
         return f"__float2half({val})"
 
+    # --- INT4 nibble unpack (Tier-2 primitive) ---
+
+    def _emit_unpack_int4(self, node) -> str:
+        self._unpack_int4_counter += 1
+        cid = self._unpack_int4_counter
+        packed = self._emit_expr(node.packed)
+        out_buf = self._emit_expr(node.out_buf)
+        base = self._emit_expr(node.base_idx)
+        p = f"_zse_u4_p_{cid}"
+        o = f"_zse_u4_o_{cid}"
+        # Unrolled shift+mask+sign-extend. HIPRTC lowers to v_bfe_i32.
+        return (
+            f"{{ unsigned int {p} = (unsigned int)({packed}); int {o} = (int)({base});\n"
+            + self._indented(f"  #pragma unroll\n")
+            + self._indented(f"  for (int _zse_u4_i_{cid} = 0; _zse_u4_i_{cid} < 8; ++_zse_u4_i_{cid}) {{\n")
+            + self._indented(f"    int _zse_u4_n_{cid} = (int)(({p} >> (_zse_u4_i_{cid} * 4)) & 0xF);\n")
+            + self._indented(f"    _zse_u4_n_{cid} = (_zse_u4_n_{cid} ^ 0x8) - 0x8;\n")
+            + self._indented(f"    ({out_buf})[{o} + _zse_u4_i_{cid}] = _zse_u4_n_{cid};\n")
+            + self._indented(f"  }} }}")
+        )
+
+    def _emit_unpack_uint4(self, node) -> str:
+        self._unpack_uint4_counter += 1
+        cid = self._unpack_uint4_counter
+        packed = self._emit_expr(node.packed)
+        out_buf = self._emit_expr(node.out_buf)
+        base = self._emit_expr(node.base_idx)
+        p = f"_zse_uu4_p_{cid}"
+        o = f"_zse_uu4_o_{cid}"
+        # Unrolled shift+mask, no sign-extend. HIPRTC lowers to v_bfe_u32.
+        return (
+            f"{{ unsigned int {p} = (unsigned int)({packed}); int {o} = (int)({base});\n"
+            + self._indented(f"  #pragma unroll\n")
+            + self._indented(f"  for (int _zse_uu4_i_{cid} = 0; _zse_uu4_i_{cid} < 8; ++_zse_uu4_i_{cid}) {{\n")
+            + self._indented(f"    int _zse_uu4_n_{cid} = (int)(({p} >> (_zse_uu4_i_{cid} * 4)) & 0xF);\n")
+            + self._indented(f"    ({out_buf})[{o} + _zse_uu4_i_{cid}] = _zse_uu4_n_{cid};\n")
+            + self._indented(f"  }} }}")
+        )
+
     # --- Dynamic Shared Memory ---
 
     def _emit_dynamic_shared_mem_decl(self, node) -> str:
@@ -283,3 +370,48 @@ class ROCmCodegen(BaseCodegen):
         dtype = DM.get(node.dtype)
         hip_type = dtype.hip_type if dtype else "float"
         return f"extern __shared__ {hip_type} {name}[];"
+
+    # --- AMD CDNA MFMA matrix cores (Tier-4) ---
+
+    # shape -> (builtin name, A/B lane width, C lane width)
+    _MFMA_SPECS = {
+        "16x16x16_f16": ("__builtin_amdgcn_mfma_f32_16x16x16f16", 4, 4),
+        "32x32x8_f16":  ("__builtin_amdgcn_mfma_f32_32x32x8f16",  4, 16),
+    }
+
+    def _emit_mfma_op(self, node) -> str:
+        spec = self._MFMA_SPECS.get(node.shape)
+        if spec is None:
+            raise NotImplementedError(f"Unsupported MFMA shape: {node.shape}")
+        builtin, ab_w, c_w = spec
+        self._mfma_counter += 1
+        cid = self._mfma_counter
+        a = self._emit_expr(node.a_buf)
+        b = self._emit_expr(node.b_buf)
+        c = self._emit_expr(node.c_buf)
+        av = f"_zse_mfma_a_{cid}"
+        bv = f"_zse_mfma_b_{cid}"
+        cv = f"_zse_mfma_c_{cid}"
+        # HIP `half` is `__half` (struct wrapper); ext_vector of __fp16 needs the raw
+        # 16-bit value. Round-trip via __half2float -> (__fp16) cast is the portable
+        # bridge and the optimizer folds it to a no-op move.
+        a_init = ", ".join(f"(__fp16)__half2float(({a})[{i}])" for i in range(ab_w))
+        b_init = ", ".join(f"(__fp16)__half2float(({b})[{i}])" for i in range(ab_w))
+        c_init = ", ".join(f"({c})[{i}]" for i in range(c_w))
+        # Block scope keeps multiple MFMA calls per kernel from colliding.
+        # __fp16 (== _Float16) is HIP's fp16; ext_vector_type makes the SIMD vector.
+        lines = [
+            "{",
+            f"  typedef __fp16 _zse_mfma_h{ab_w}_t_{cid} __attribute__((ext_vector_type({ab_w})));",
+            f"  typedef float _zse_mfma_f{c_w}_t_{cid} __attribute__((ext_vector_type({c_w})));",
+            f"  _zse_mfma_h{ab_w}_t_{cid} {av} = {{ {a_init} }};",
+            f"  _zse_mfma_h{ab_w}_t_{cid} {bv} = {{ {b_init} }};",
+            f"  _zse_mfma_f{c_w}_t_{cid} {cv} = {{ {c_init} }};",
+            f"  {cv} = {builtin}({av}, {bv}, {cv}, 0, 0, 0);",
+            f"  #pragma unroll",
+            f"  for (int _zse_mfma_i_{cid} = 0; _zse_mfma_i_{cid} < {c_w}; ++_zse_mfma_i_{cid}) {{",
+            f"    ({c})[_zse_mfma_i_{cid}] = {cv}[_zse_mfma_i_{cid}];",
+            f"  }}",
+            f"}}",
+        ]
+        return "\n".join(self._indented(l) if i > 0 else l for i, l in enumerate(lines))

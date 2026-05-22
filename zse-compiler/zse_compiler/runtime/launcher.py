@@ -175,13 +175,49 @@ class KernelLauncher:
             raise RuntimeError(f"hipModuleLaunchKernel failed with status {status}")
 
     def _launch_metal(self, kernel: CompiledKernel, config: LaunchConfig, args: tuple):
-        """Launch Metal kernel — requires Metal Python bridge or ctypes to ObjC."""
-        # Metal launch is more complex — requires command buffer, encoder, etc.
-        # This is a placeholder for the Metal dispatch pipeline
-        raise NotImplementedError(
-            "Metal kernel launch requires the Metal framework bridge. "
-            "Use zse_compiler.runtime.metal_bridge for macOS dispatch."
+        """Launch Metal kernel via the C bridge (no Xcode needed).
+
+        Metal passes all arguments as buffers. Tensor args use their existing
+        Metal buffer handle. Scalar args (int/float) get packed into small
+        temporary buffers.
+        """
+        import struct
+        from zse_compiler.runtime.metal_dispatch import get_metal_runtime
+
+        rt = get_metal_runtime()
+        buffers = []
+        _scalar_bufs = []  # prevent GC
+
+        for arg in args:
+            if isinstance(arg, Tensor):
+                # Tensor.data_ptr is the Metal buffer handle
+                buffers.append(ctypes.c_void_p(arg.data_ptr))
+            elif isinstance(arg, int):
+                # Pack int32 into a tiny Metal buffer
+                buf = rt.alloc_buffer(4)
+                ptr = rt.buffer_contents(buf)
+                ctypes.memmove(ptr, struct.pack("<i", arg), 4)
+                buffers.append(buf)
+                _scalar_bufs.append(buf)
+            elif isinstance(arg, float):
+                buf = rt.alloc_buffer(4)
+                ptr = rt.buffer_contents(buf)
+                ctypes.memmove(ptr, struct.pack("<f", arg), 4)
+                buffers.append(buf)
+                _scalar_bufs.append(buf)
+            else:
+                raise TypeError(f"Unsupported Metal kernel argument type: {type(arg)}")
+
+        rt.dispatch(
+            kernel.module,  # pipeline ptr
+            buffers,
+            grid=config.grid,
+            block=config.block,
         )
+
+        # Free scalar temp buffers
+        for buf in _scalar_bufs:
+            rt.free_buffer(buf)
 
     def _prepare_args_cuda(self, args: tuple):
         """Convert Python arguments to CUDA kernel argument array."""

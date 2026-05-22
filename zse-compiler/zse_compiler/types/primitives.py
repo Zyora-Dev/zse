@@ -331,17 +331,30 @@ def block_reduce_min(val):
 
 # --- Tiling helper ---
 
-def tile_load(tensor, tile_row: int, tile_col: int, tile_size: int, shared_buf=None):
+def tile_load(tensor, tile_row: int, tile_col: int, tile_size: int,
+              shared_buf=None, bound_row=None, bound_col=None):
     """Load a tile from global memory into shared memory.
 
     Cooperative load — each thread in the block loads one or more elements.
     syncthreads is called after load completes.
+
+    Optional bound_row / bound_col enable boundary predication: threads
+    whose target element falls outside [0, bound_row) x [0, bound_col)
+    write 0.0 into the shared tile instead of reading out-of-bounds global
+    memory. Required for matmul tail tiles when the problem size isn't a
+    tile multiple.
     """
     return None
 
 
-def tile_store(shared_buf, tensor, tile_row: int, tile_col: int, tile_size: int):
-    """Store a tile from shared memory back to global memory."""
+def tile_store(shared_buf, tensor, tile_row: int, tile_col: int, tile_size: int,
+               bound_row=None, bound_col=None):
+    """Store a tile from shared memory back to global memory.
+
+    Optional bound_row / bound_col enable boundary predication: threads
+    whose target element falls outside [0, bound_row) x [0, bound_col)
+    skip the store.
+    """
     pass
 
 
@@ -462,6 +475,129 @@ def wmma_store(tensor, row: int, col: int, stride: int, frag=None):
     return None
 
 
+# --- AMD CDNA MFMA intrinsics (Tier-4) ---
+
+def mfma_f32_16x16x16_f16(a_buf, b_buf, c_buf) -> None:
+    """Issue a CDNA ``mfma_f32_16x16x16f16`` matrix multiply-accumulate.
+
+    Computes ``C = A * B + C`` over a 16x16x16 fp16→fp32 tile, distributed
+    across a 64-lane wavefront. Buffer layouts (per lane):
+
+    - ``a_buf``: ``local_array(4, float16)`` — 4 fp16 of A held by this lane
+    - ``b_buf``: ``local_array(4, float16)`` — 4 fp16 of B held by this lane
+    - ``c_buf``: ``local_array(4, float32)`` — 4 fp32 accumulator slots (IN/OUT)
+
+    Lowering:
+      ROCm: ``__builtin_amdgcn_mfma_f32_16x16x16f16(a, b, c, 0, 0, 0)``
+      CUDA / Metal: not available — use ``wmma_*`` instead. Codegen raises.
+
+    Kernel-author responsibility: load ``a_buf[0..3]`` / ``b_buf[0..3]`` from
+    shared memory based on ``lane_id()`` per the CDNA element-to-lane mapping,
+    then write ``c_buf[0..3]`` back to global memory after the K-loop.
+    """
+    return None
+
+
+def mfma_f32_32x32x8_f16(a_buf, b_buf, c_buf) -> None:
+    """Issue a CDNA ``mfma_f32_32x32x8f16`` matrix multiply-accumulate.
+
+    Computes ``C = A * B + C`` over a 32x32x8 fp16→fp32 tile. Higher compute
+    density than ``16x16x16`` (16 fp32 acc slots per lane vs 4) — usually
+    better arithmetic intensity for large GEMMs.
+
+    Buffer layouts (per lane):
+    - ``a_buf``: ``local_array(4, float16)``
+    - ``b_buf``: ``local_array(4, float16)``
+    - ``c_buf``: ``local_array(16, float32)`` — IN/OUT
+
+    Lowering: ROCm only via ``__builtin_amdgcn_mfma_f32_32x32x8f16``.
+    """
+    return None
+
+
+# --- INT4 nibble unpack (Tier-2 — foundational primitive for dequant matmul) ---
+
+def unpack_int4(packed_u32, out_buf, base_idx: int) -> None:
+    """Unpack 8 sign-extended 4-bit nibbles from a packed uint32.
+
+    Writes 8 consecutive sign-extended int values to
+    ``out_buf[base_idx .. base_idx+8]``. Nibble i comes from bits
+    [4*i, 4*i+3] of ``packed_u32`` (little-endian within the word).
+
+    Use case: foundational primitive for hand-tuned INT4 dequant matmul
+    kernels. One call replaces 8 separate shift/mask/sign-extend
+    expressions and gives the backend compiler a tight, recognizable
+    pattern.
+
+    CUDA:  unrolled bit-field-extract; NVRTC lowers to ``bfe.s32``.
+    HIP:   unrolled bit-field-extract; HIPRTC lowers to ``v_bfe_i32``.
+    Metal: scalar shift/mask/sign-extend loop.
+
+    Args:
+        packed_u32: 32-bit value containing 8 packed int4 values.
+        out_buf:    destination buffer (shared, local, or global pointer).
+        base_idx:   starting index in ``out_buf`` (writes [base, base+8)).
+    """
+    return None
+
+
+def unpack_uint4(packed_u32, out_buf, base_idx: int) -> None:
+    """Unpack 8 unsigned 4-bit nibbles (0..15) from a packed uint32.
+
+    Identical to :func:`unpack_int4` but without sign-extension. Use this
+    for the asymmetric INT4 quant format where each nibble is in [0, 15]
+    and the zero point is stored separately as fp16
+    (``dequant = nibble * scale + zero_offset``).
+
+    CUDA:  unrolled bit-field-extract; NVRTC lowers to ``bfe.u32``.
+    HIP:   unrolled bit-field-extract; HIPRTC lowers to ``v_bfe_u32``.
+    Metal: scalar shift/mask loop.
+    """
+    return None
+
+
+# --- Local register array + pointer reinterpret (Tier-3 — IP-pure dequant matmul) ---
+
+def local_array(size: int, dtype=None):
+    """Declare a per-thread local-scope array.
+
+    Use for hand-tuned kernels that need a small per-thread scratch
+    buffer — e.g. 8 nibbles for an INT4 dequant matmul accumulator.
+    CUDA/HIP ptxas typically promotes small fully-unrolled arrays to
+    registers, giving zero-overhead scratch storage.
+
+    Assign to a name, then index normally::
+
+        buf = zse.local_array(8, zse.int32)
+        zse.unpack_uint4(packed[i], buf, 0)
+        v0 = buf[0]
+
+    CUDA:  ``int buf[8];``
+    HIP:   ``int buf[8];``
+    Metal: ``thread int buf[8];``
+    """
+    return None
+
+
+def reinterpret(ptr, dtype=None):
+    """Reinterpret a pointer as a different element type.
+
+    Emits a C-style pointer cast — useful for vectorized weight loads
+    (pulling 4 packed uint8 nibbles as a single uint32 load), or for
+    reading typed values from a raw byte buffer::
+
+        qp = zse.reinterpret(weights_u8, zse.uint32)
+        packed = qp[i]   # one 32-bit load instead of four 8-bit loads
+
+    The result has the same address space as the source pointer.
+
+    CUDA:  ``auto qp = (unsigned int*)(weights_u8);``
+    HIP:   ``auto qp = (unsigned int*)(weights_u8);``
+    Metal: ``device uint* qp = (device uint*)(weights_u8);``
+    """
+    return None
+
+
 # Mapping for AST parser to recognize these calls
 PRIMITIVE_FUNCTIONS = {
     # Thread indexing
@@ -469,6 +605,7 @@ PRIMITIVE_FUNCTIONS = {
     "lane_id", "warp_id",
     # Memory
     "shared_memory", "dynamic_shared_memory", "syncthreads",
+    "local_array", "reinterpret",
     # Atomics
     "atomic_add", "atomic_max", "atomic_min", "atomic_cas",
     # Math
@@ -489,4 +626,9 @@ PRIMITIVE_FUNCTIONS = {
     "tile_load", "tile_store",
     # WMMA / Tensor Core
     "wmma_load_a", "wmma_load_b", "wmma_fill", "wmma_mma", "wmma_store",
+    # CDNA MFMA (AMD matrix cores) — Tier-4
+    "mfma_f32_16x16x16_f16", "mfma_f32_32x32x8_f16",
+    # INT4 nibble unpack
+    "unpack_int4",
+    "unpack_uint4",
 }

@@ -46,6 +46,7 @@ class StoredChunk:
     metadata: Dict[str, Any]
     embedding: bytes
     token_count: int
+    dense_vector: Optional[bytes] = None  # fp16 L2-normalized dense embedding
 
 
 @dataclass
@@ -56,6 +57,8 @@ class SearchResult:
     doc_name: str = ""
     cosine_score: float = 0.0
     bm25_score: float = 0.0
+    dense_score: float = 0.0
+    rerank_score: Optional[float] = None
 
 
 class InvertedIndex:
@@ -157,6 +160,15 @@ class RAGStore:
             CREATE INDEX IF NOT EXISTS idx_rag_chunks_doc
                 ON rag_chunks(doc_id, chunk_index);
         """)
+
+        # Idempotent migration: add dense_vector column if missing
+        cols = {row[1] for row in self._conn.execute(
+            "PRAGMA table_info(rag_chunks)"
+        ).fetchall()}
+        if "dense_vector" not in cols:
+            self._conn.execute(
+                "ALTER TABLE rag_chunks ADD COLUMN dense_vector BLOB"
+            )
 
     # ------------------------------------------------------------------
     # Document CRUD
@@ -261,8 +273,8 @@ class RAGStore:
         ).fetchall()
         result = {}
         for row in rows:
-            chunk = self._row_to_chunk(row[:8])
-            doc_name = row[8] if len(row) > 8 else ""
+            chunk = self._row_to_chunk(row[:9])
+            doc_name = row[9] if len(row) > 9 else ""
             result[chunk.id] = (chunk, doc_name)
         return result
 
@@ -325,8 +337,8 @@ class RAGStore:
 
             scored = []
             for row in rows:
-                chunk = self._row_to_chunk(row[:8])
-                doc_name = row[8] if len(row) > 8 else ""
+                chunk = self._row_to_chunk(row[:9])
+                doc_name = row[9] if len(row) > 9 else ""
                 chunk_sparse = _bytes_to_sparse(chunk.embedding)
                 cosine = _sparse_cosine(query_sparse, chunk_sparse)
 
@@ -434,8 +446,48 @@ class RAGStore:
             meta = json.loads(row[5]) if row[5] else {}
         except Exception:
             pass
+        # Backward compat: dense_vector column is at index 8 if present
+        dense = row[8] if len(row) > 8 and row[8] else None
         return StoredChunk(
             id=row[0], doc_id=row[1], chunk_index=row[2],
             content=row[3], compressed=row[4], metadata=meta,
             embedding=row[6] if row[6] else b'', token_count=row[7],
+            dense_vector=dense,
         )
+
+    # ------------------------------------------------------------------
+    # Dense vector ops (used by RAG dense / hybrid search)
+    # ------------------------------------------------------------------
+
+    def set_dense_vector(self, chunk_id: int, vec: bytes):
+        """Persist a dense embedding for a chunk."""
+        self._conn.execute(
+            "UPDATE rag_chunks SET dense_vector = ? WHERE id = ?",
+            (vec, chunk_id),
+        )
+
+    def get_dense_vectors(self, chunk_ids: Set[int]) -> Dict[int, bytes]:
+        """Bulk fetch dense vectors for a set of chunk IDs."""
+        if not chunk_ids:
+            return {}
+        placeholders = ",".join("?" for _ in chunk_ids)
+        rows = self._conn.execute(
+            f"SELECT id, dense_vector FROM rag_chunks "
+            f"WHERE id IN ({placeholders}) AND dense_vector IS NOT NULL",
+            list(chunk_ids),
+        ).fetchall()
+        return {r[0]: r[1] for r in rows if r[1]}
+
+    def all_chunk_ids_missing_dense(self) -> List[int]:
+        """Return chunk IDs that don't yet have a dense embedding."""
+        rows = self._conn.execute(
+            "SELECT id FROM rag_chunks WHERE dense_vector IS NULL"
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def get_chunk_text(self, chunk_id: int) -> Optional[str]:
+        row = self._conn.execute(
+            "SELECT content FROM rag_chunks WHERE id = ?", (chunk_id,)
+        ).fetchone()
+        return row[0] if row else None
+

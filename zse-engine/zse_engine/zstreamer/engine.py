@@ -165,31 +165,9 @@ class ZStreamerEngine:
         # Defer tokenizer deserialization — it's expensive and not needed until after init
         t_load = time.monotonic() - t_load0
 
-        # Start pre-faulting weight data from NFS into page cache ASAP
-        # This runs during VRAM planning + kernel compilation (pure CPU/NFS I/O)
-        def _prefault_mmap():
-            try:
-                import os as _os
-                wd_offset = self._loader._weight_data_offset
-                file_size = _os.path.getsize(self._loader._path)
-                if wd_offset > 0:
-                    fd = _os.open(self._loader._path, _os.O_RDONLY)
-                    try:
-                        _os.lseek(fd, wd_offset, _os.SEEK_SET)
-                        remaining = file_size - wd_offset
-                        CHUNK = 8 * 1024 * 1024
-                        while remaining > 0:
-                            n = _os.read(fd, min(CHUNK, remaining))
-                            if not n:
-                                break
-                            remaining -= len(n)
-                    finally:
-                        _os.close(fd)
-            except Exception:
-                pass
-
-        prefault_thread = threading.Thread(target=_prefault_mmap, daemon=True)
-        prefault_thread.start()
+        # NOTE: weight pre-fault is no longer needed — the WeightLoader now
+        # streams the file directly via os.preadv into a pinned ring buffer,
+        # which pipelines storage I/O with PCIe transfer. No double-read.
 
         if max_seq_len <= 0:
             max_seq_len = min(self._config.max_seq_len, 2048)
@@ -201,25 +179,61 @@ class ZStreamerEngine:
         # --- VRAM Allocation ---
         self._allocator = VRAMAllocator(self._gpu_mem, self._device)
         model_size = self._config.estimate_model_size_bytes()
-        self._vram_plan = self._allocator.plan_allocation(model_size, self._config, max_seq_len)
+        self._vram_plan = self._allocator.plan_allocation(
+            model_size,
+            self._config,
+            max_seq_len=max_seq_len,
+            max_batch_seqs=scheduler_config.max_batch_seqs,
+        )
         if not quiet:
             print(self._vram_plan.summary())
 
         t_plan = time.monotonic() - t0
 
-        # --- Compile kernels + upload weights (prefault already running) ---
+        # --- Compile kernels + upload weights (parallel) ---
         if not quiet:
             print("[ZStreamer] Uploading weights + compiling kernels (parallel)...")
         t0 = time.monotonic()
 
         wl = WeightLoader(self._loader, self._gpu_mem)
 
-        # Finish kernel compilation on main thread (while mmap pre-faults in parallel)
+        # Wait for background PTX *compilation* to finish (it ran in a worker
+        # while we were parsing the file + planning VRAM).
         t_comp0 = time.monotonic()
+        ptx_results = None
         if ptx_future is not None:
-            # Wait for PTX compilation, then load modules on main thread
             ptx_results = ptx_future.result()
             ptx_executor.shutdown(wait=False)
+
+        # Kick off weight upload in a background thread. The streamed loader
+        # uses its own CUDA stream + pinned ring buffer, so it does not block
+        # the main thread from loading kernel modules into the GPU context.
+        weight_error = [None]
+
+        # Capture the current CUDA/HIP context so the worker thread can push it.
+        # CUDA contexts are per-thread; a fresh thread sees NULL by default.
+        captured_ctx = None
+        if backend == "cuda":
+            captured_ctx = ctypes.c_void_p()
+            self._gpu_mem._driver.cuCtxGetCurrent(ctypes.byref(captured_ctx))
+
+        def _upload_weights():
+            try:
+                if backend == "cuda" and captured_ctx and captured_ctx.value:
+                    self._gpu_mem._driver.cuCtxSetCurrent(captured_ctx)
+                elif backend == "rocm":
+                    self._gpu_mem._driver.hipSetDevice(self._gpu_mem.device_index)
+                self._weights = wl.load_all()
+            except Exception as e:
+                weight_error[0] = e
+
+        upload_thread = threading.Thread(target=_upload_weights, daemon=True)
+        upload_thread.start()
+
+        # Meanwhile, finish kernel module loading on the main thread.
+        # This is mostly PTX -> cubin JIT (CPU + small GPU work) and overlaps
+        # cleanly with the weight HtoD copies.
+        if ptx_results is not None:
             self._kernels._load_ptx_modules(ptx_results)
         else:
             # Non-CUDA or fallback: compile everything now
@@ -227,22 +241,13 @@ class ZStreamerEngine:
             self._kernels.compile_all(quant_type=quant_type)
         t_compile = time.monotonic() - t_comp0
 
-        # Upload weights — prefault thread continues in background pulling pages
-        # from NFS ahead of the HtoD copies. Don't wait for it.
-        weight_error = [None]
-        try:
-            self._weights = wl.load_all()
-        except Exception as e:
-            weight_error[0] = e
-
-        # Clean up prefault thread (should be done by now)
-        prefault_thread.join(timeout=1.0)
-
+        # Wait for weight upload thread
+        upload_thread.join()
         if weight_error[0]:
             raise RuntimeError(f"Weight loading failed: {weight_error[0]}")
 
         t_parallel = time.monotonic() - t0
-        t_weights = t_parallel  # approximate (overlapped)
+        t_weights = t_parallel  # approximate (overlapped with compile)
 
         # Deserialize tokenizer now (deferred from load phase)
         self._tokenizer = self._loader.tokenizer
@@ -283,6 +288,15 @@ class ZStreamerEngine:
             kernels=self._kernels,
             lora_manager=self._lora_manager,
         )
+
+        # --- GPU Graph (captures decode forward pass; ~960 launches → 1) ---
+        try:
+            self._model_runner.init_graph(max_seq_len=max_seq_len)
+            if not quiet:
+                print("[ZStreamer] GPU graph runner ready (decode acceleration)")
+        except Exception as e:
+            if not quiet:
+                print(f"[ZStreamer] GPU graph init skipped: {e}")
 
         # --- Sampler ---
         self._sampler = Sampler()

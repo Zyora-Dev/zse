@@ -267,22 +267,36 @@ class IRStoreHalf2(IRNode):
 
 @dataclass
 class IRTileLoad(IRNode):
-    """Cooperative tile load from global to shared memory."""
+    """Cooperative tile load from global to shared memory.
+
+    If bound_row / bound_col are provided, threads whose target element
+    lies outside the bounds skip the load and write 0.0f into the shared
+    tile slot — this is required for matmul tail tiles where the problem
+    size isn't a tile multiple.
+    """
     tensor: IRNode
     tile_row: IRNode
     tile_col: IRNode
     tile_size: IRNode
     shared_buf: Optional[IRNode] = None
+    bound_row: Optional[IRNode] = None
+    bound_col: Optional[IRNode] = None
 
 
 @dataclass
 class IRTileStore(IRNode):
-    """Store tile from shared memory to global memory."""
+    """Store tile from shared memory to global memory.
+
+    If bound_row / bound_col are provided, threads whose target element
+    lies outside the bounds skip the store.
+    """
     shared_buf: IRNode
     tensor: IRNode
     tile_row: IRNode
     tile_col: IRNode
     tile_size: IRNode
+    bound_row: Optional[IRNode] = None
+    bound_col: Optional[IRNode] = None
 
 
 # --- Tensor Core / WMMA ---
@@ -330,6 +344,28 @@ class IRWmmaStore(IRNode):
     col: IRNode
     stride: IRNode
     frag: IRNode
+
+
+# --- AMD CDNA MFMA (Matrix Fused Multiply-Add) — Tier-4 ---
+
+@dataclass
+class IRMfmaOp(IRNode):
+    """AMD CDNA matrix multiply-accumulate.
+
+    Operands are existing ``local_array`` buffers (per-lane fragments). In ROCm
+    codegen the buffers are copied into ``ext_vector_type`` vectors, the
+    ``__builtin_amdgcn_mfma_*`` builtin is issued, then the result is written
+    back into the C buffer in place.
+
+    Shape is one of: "16x16x16_f16", "32x32x8_f16". Determines:
+      - A,B lane fragment width (always 4 fp16 for these two shapes)
+      - C lane fragment width (4 fp32 for 16x16x16, 16 fp32 for 32x32x8)
+      - Which CDNA builtin is emitted
+    """
+    a_buf: IRNode      # local_array(4, float16) — A fragment per lane
+    b_buf: IRNode      # local_array(4, float16) — B fragment per lane
+    c_buf: IRNode      # local_array(4 or 16, float32) — C accumulator per lane (in/out)
+    shape: str         # "16x16x16_f16" or "32x32x8_f16"
 
 
 # --- Math Functions ---
@@ -394,3 +430,73 @@ class IRDynamicSharedMemDecl(IRNode):
     """
     dtype: str = "float32"
     name: str = ""
+
+
+# --- INT4 nibble unpack (Tier-2 primitive for hand-tuned dequant kernels) ---
+
+@dataclass
+class IRUnpackInt4(IRNode):
+    """Unpack 8 sign-extended 4-bit nibbles from a packed uint32 into out_buf.
+
+    Writes 8 consecutive sign-extended int values to out_buf[base_idx..base_idx+8].
+    Nibble i comes from bits [4*i .. 4*i+3] of packed (little-endian within u32).
+
+    Lowered to an unrolled shift+mask+sign-extend sequence that NVRTC / HIPRTC
+    optimize to native bit-field-extract instructions (`bfe.s32` on PTX,
+    `v_bfe_i32` on AMDGCN). Metal uses the scalar form.
+
+    This is the foundational primitive for fast INT4 dequant matmuls — avoids
+    8 separate Python-DSL shift/mask expressions and gives the backend
+    compiler a tight, recognizable pattern.
+    """
+    packed: IRNode      # uint32 source
+    out_buf: IRNode     # destination buffer (shared or local)
+    base_idx: IRNode    # starting index in out_buf
+
+
+@dataclass
+class IRUnpackUint4(IRNode):
+    """Unpack 8 unsigned 4-bit nibbles (0..15) from a packed uint32 into out_buf.
+
+    Identical to IRUnpackInt4 but without sign-extension — used for the
+    asymmetric INT4 quant format where each nibble is in [0, 15] and the
+    zero point is stored separately (as in our .zse INT4 weight layout).
+
+    Lowering: unrolled (packed >> (4*i)) & 0xF. NVRTC -> bfe.u32,
+    HIPRTC -> v_bfe_u32, Metal -> scalar shift+mask.
+    """
+    packed: IRNode
+    out_buf: IRNode
+    base_idx: IRNode
+
+
+# --- Local register array (Tier-3 primitive — per-thread scratch in registers) ---
+
+@dataclass
+class IRLocalArrayDecl(IRNode):
+    """Per-thread local-scope array. CUDA/HIP: `T name[size];` (stack —
+    promoted to registers by ptxas/llvm when size is small and accesses
+    are unrolled). Metal: `thread T name[size];`.
+
+    Use for hand-tuned dequant kernels that need a per-thread N-nibble
+    scratch buffer before doing the matmul accumulate.
+    """
+    name: str = ""
+    size: int = 0
+    dtype: str = "float32"
+
+
+# --- Pointer reinterpret cast (Tier-3 primitive — vectorized weight loads) ---
+
+@dataclass
+class IRReinterpret(IRNode):
+    """Reinterpret a pointer as a different element type — emits a C-style
+    cast like `((unsigned int*)(weight_bytes))`. Used to pull 4 packed
+    uint8 weights as one uint32 load (vectorized memory).
+
+    Operand must be an existing tensor / pointer expression. Result is an
+    expression of the new pointer type; assign to a local variable, then
+    index normally: `qp = zse.reinterpret(w, zse.uint32); v = qp[i]`.
+    """
+    operand: IRNode
+    dtype: str = "uint32"

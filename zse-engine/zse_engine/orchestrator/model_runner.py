@@ -24,6 +24,21 @@ from zse_engine.orchestrator.weight_loader import WeightStore, GPUWeight
 from zse_engine.orchestrator.vram_allocator import ScratchBuffers
 
 
+# ---------------------------------------------------------------------------
+# fp16 <-> Python float conversion (zero-dep, used by embed_pooled)
+# ---------------------------------------------------------------------------
+
+def _fp16_bytes_to_floats(data: bytes, n: int) -> List[float]:
+    """Decode n fp16 elements from bytes to Python floats."""
+    # struct lacks native fp16 — bit-unpack via 'e' format (added in Py 3.6)
+    return list(struct.unpack(f'<{n}e', data[:n * 2]))
+
+
+def _floats_to_fp16_bytes(floats: List[float]) -> bytes:
+    """Encode Python floats as fp16 bytes."""
+    return struct.pack(f'<{len(floats)}e', *floats)
+
+
 # Avoid circular import — LoRAManager is optional
 try:
     from zse_engine.orchestrator.lora_manager import LoRAManager
@@ -312,6 +327,105 @@ class ModelRunner:
 
         self._gpu_mem.free(token_tensor)
         return logits_data
+
+    # ------------------------------------------------------------------
+    # Embedding extraction (for RAG dense retrieval / reranking)
+    # ------------------------------------------------------------------
+
+    def embed_pooled(self, token_ids: List[int], seq_id: int) -> bytes:
+        """Run forward pass and return MEAN-POOLED, L2-normalized hidden state.
+
+        Used by RAG for dense semantic embeddings — uses the loaded LLM as the
+        encoder (no separate embedding model needed). Skips the LM-head matmul
+        for ~10% speedup vs prefill.
+
+        Args:
+            token_ids: Input token IDs
+            seq_id: Ephemeral KV slot — caller is responsible for freeing via
+                    self._kv_cache.free_sequence(seq_id) afterward.
+
+        Returns:
+            Raw fp16 bytes of the pooled hidden state (hidden_size elements,
+            L2-normalized so dot product == cosine similarity).
+        """
+        seq_len = len(token_ids)
+        if seq_len == 0:
+            return b''
+
+        self._kv_cache.allocate_sequence(seq_id, prompt_tokens=token_ids)
+        self._kv_cache.mark_active(seq_id)
+        token_tensor = self._upload_int32(token_ids)
+
+        embed_weight = self._weights.get("embed_tokens.weight")
+        self._kernels.launch(
+            "embedding_lookup_f32out",
+            ((seq_len * self._hidden_size + 255) // 256,),
+            (256,),
+            self._scratch.hidden_f32, self._make_tensor_from_ptr(
+                embed_weight.data_ptr, (self._config.vocab_size, self._hidden_size)),
+            token_tensor, self._hidden_size, seq_len,
+        )
+
+        meta = self._kv_cache.get_attention_metadata([seq_id])
+        block_table_tensor = self._upload_block_table(meta, seq_id=0)
+        seq_lens_tensor = self._upload_int32(meta.seq_lengths)
+        kv_slab = self._get_kv_slab_tensor()
+
+        for layer in range(self._num_layers):
+            self._transformer_block_prefill(
+                layer, seq_id, seq_len,
+                kv_slab, block_table_tensor, seq_lens_tensor, meta,
+                lora_adapter=None,
+            )
+
+        self._gpu_mem.free(block_table_tensor)
+        self._gpu_mem.free(seq_lens_tensor)
+
+        # Final RMSNorm → fp16 [seq_len, hidden] in self._scratch.norm_out
+        final_norm_w = self._get_layer_weight("model.norm.weight")
+        self._launch_rmsnorm_f32in(
+            self._scratch.norm_out, self._scratch.hidden_f32,
+            final_norm_w, seq_len,
+        )
+
+        # Download all seq_len rows of fp16 hidden states
+        all_hidden = self._download_fp16(
+            self._scratch.norm_out, seq_len * self._hidden_size,
+        )
+
+        self._gpu_mem.free(token_tensor)
+
+        # Mean-pool + L2-normalize in Python (cheap: hidden_size ~ 4K-5K)
+        import struct, math
+        H = self._hidden_size
+        # Convert fp16 bytes → list[float]
+        floats = _fp16_bytes_to_floats(all_hidden, seq_len * H)
+        pooled = [0.0] * H
+        for t in range(seq_len):
+            base = t * H
+            for i in range(H):
+                pooled[i] += floats[base + i]
+        inv = 1.0 / max(seq_len, 1)
+        for i in range(H):
+            pooled[i] *= inv
+
+        # L2 normalize
+        norm = math.sqrt(sum(v * v for v in pooled))
+        if norm > 1e-8:
+            inv_n = 1.0 / norm
+            for i in range(H):
+                pooled[i] *= inv_n
+
+        # Pack back to fp16 bytes for storage
+        return _floats_to_fp16_bytes(pooled)
+
+    @property
+    def hidden_size(self) -> int:
+        return self._hidden_size
+
+    @property
+    def vocab_size(self) -> int:
+        return self._config.vocab_size
 
     def decode_step(self, token_id: int, seq_id: int, position: int,
                     lora_adapter=None, skip_logits_download: bool = False) -> bytes:
@@ -643,31 +757,47 @@ class ModelRunner:
         self._apply_bias_if_present(k_buf, layer, "self_attn.k_proj.bias", M, k_dim)
         self._apply_bias_if_present(v_buf, layer, "self_attn.v_proj.bias", M, k_dim)
 
-        # RoPE — BATCHED (single kernel launch for all M sequences)
-        # Uses pre-uploaded positions buffer (no per-layer alloc/free)
-        half_dim = self._head_dim // 2
-        total_rope = M * max(self._num_heads, self._num_kv_heads) * half_dim
-        self._kernels.launch(
-            "batched_rotary_embedding",
-            ((total_rope + 255) // 256,),
-            (256,),
-            q_buf, k_buf, self._decode_pos_buf,
-            M, self._num_heads, self._num_kv_heads,
-            self._head_dim, self._rope_theta,
-        )
+        # RoPE + KV cache write — on ROCm, use the fused kernel (1 launch instead of 2,
+        # K-buffer round-trip eliminated). CUDA falls back to the original two-kernel path.
+        if self._backend == "rocm" and "fused_rope_kv_write" in self._kernels._kernel_sources:
+            half_dim = self._head_dim // 2
+            max_threads = max(self._num_heads * half_dim, self._num_kv_heads * self._head_dim)
+            self._kernels.launch(
+                "fused_rope_kv_write",
+                ((max_threads + 255) // 256, M),
+                (256,),
+                q_buf, k_buf, v_buf, kv_slab,
+                block_table_tensor, self._decode_pos_buf,
+                M, self._num_heads, self._num_kv_heads, self._head_dim,
+                self._kv_cache.block_size, meta.max_blocks_per_seq,
+                self._num_layers, layer, self._rope_theta,
+            )
+        else:
+            # RoPE — BATCHED (single kernel launch for all M sequences)
+            # Uses pre-uploaded positions buffer (no per-layer alloc/free)
+            half_dim = self._head_dim // 2
+            total_rope = M * max(self._num_heads, self._num_kv_heads) * half_dim
+            self._kernels.launch(
+                "batched_rotary_embedding",
+                ((total_rope + 255) // 256,),
+                (256,),
+                q_buf, k_buf, self._decode_pos_buf,
+                M, self._num_heads, self._num_kv_heads,
+                self._head_dim, self._rope_theta,
+            )
 
-        # KV cache write — BATCHED (single launch for all M sequences)
-        total_kv = self._num_kv_heads * self._head_dim
-        self._kernels.launch(
-            "batched_kv_cache_write",
-            ((total_kv + 255) // 256, M),
-            (256,),
-            kv_slab, k_buf, v_buf,
-            block_table_tensor, self._decode_pos_buf,
-            M, self._num_kv_heads, self._head_dim,
-            self._kv_cache.block_size,
-            meta.max_blocks_per_seq, self._num_layers, layer,
-        )
+            # KV cache write — BATCHED (single launch for all M sequences)
+            total_kv = self._num_kv_heads * self._head_dim
+            self._kernels.launch(
+                "batched_kv_cache_write",
+                ((total_kv + 255) // 256, M),
+                (256,),
+                kv_slab, k_buf, v_buf,
+                block_table_tensor, self._decode_pos_buf,
+                M, self._num_kv_heads, self._head_dim,
+                self._kv_cache.block_size,
+                meta.max_blocks_per_seq, self._num_layers, layer,
+            )
 
         # Paged attention — FULLY BATCHED (this is the big win)
         # Grid: (M, num_heads) — each blockIdx.x handles one sequence
@@ -1525,34 +1655,68 @@ class ModelRunner:
 
         if M not in self._batched_graph_runners:
             # Capture a new graph for batch size M
-            from zse_engine.orchestrator.hip_graph import HIPGraphRunner, CUDAGraphRunner
-            if self._backend == "rocm":
-                gr = HIPGraphRunner(self._gpu_mem._driver)
-            else:
-                gr = CUDAGraphRunner(self._gpu_mem._driver)
-            stream = gr.create_stream()
+            self._capture_batched_graph(M, meta)
+            # Opportunistically pre-capture all smaller batch sizes too, using
+            # the first M' seq_ids from this batch. This eliminates the recapture
+            # stall when sequences finish mid-stream and M shrinks.
+            for sub_m in range(M - 1, 0, -1):
+                if sub_m in self._batched_graph_runners:
+                    continue
+                sub_meta = self._kv_cache.get_attention_metadata(seq_ids[:sub_m])
+                sub_meta.max_blocks_per_seq = max_blocks
+                self._capture_batched_graph(sub_m, sub_meta)
 
-            gr.begin_capture()
-            self._run_batched_decode_kernels(M, meta, stream=stream)
-            gr.end_capture()
-            gr.sync()
+        # Replay (always — captured fresh above or hit cache)
+        gr, stream = self._batched_graph_runners[M]
+        gr.replay()
+        gr.sync()
 
-            self._batched_graph_runners[M] = (gr, stream)
+        # Bulk download all M argmax results in ONE DtoH transfer (4*M bytes)
+        # Previously did M separate 4-byte copies = M * ~50us ctypes overhead.
+        view = Tensor(shape=(M,), dtype=int32)
+        view._data_ptr = self._graph_argmax_buf.data_ptr
+        view._nbytes = M * 4
+        result_bytes = self._gpu_mem.copy_device_to_host(view)
+        return list(struct.unpack(f'<{M}i', result_bytes[:M * 4]))
+
+    def _capture_batched_graph(self, M: int, meta):
+        """Capture a graph for batch size M. Called lazily or via precapture_batched_graphs()."""
+        from zse_engine.orchestrator.hip_graph import HIPGraphRunner, CUDAGraphRunner
+        if self._backend == "rocm":
+            gr = HIPGraphRunner(self._gpu_mem._driver)
         else:
-            # Replay existing graph
-            gr, stream = self._batched_graph_runners[M]
-            gr.replay()
-            gr.sync()
+            gr = CUDAGraphRunner(self._gpu_mem._driver)
+        stream = gr.create_stream()
 
-        # Download M argmax results
-        results = []
-        for i in range(M):
-            view = Tensor(shape=(1,), dtype=int32)
-            view._data_ptr = self._graph_argmax_buf.data_ptr + i * 4
-            view._nbytes = 4
-            result_bytes = self._gpu_mem.copy_device_to_host(view)
-            results.append(struct.unpack('<i', result_bytes[:4])[0])
-        return results
+        gr.begin_capture()
+        self._run_batched_decode_kernels(M, meta, stream=stream)
+        gr.end_capture()
+        gr.sync()
+
+        self._batched_graph_runners[M] = (gr, stream)
+
+    def precapture_batched_graphs(self, batch_sizes=(1, 2, 4, 8), warmup_seq_ids=None):
+        """Pre-capture graphs for common batch sizes during warmup.
+
+        Without this, the first time we see a new batch size mid-serving we stall
+        ~50-150ms capturing the graph. Pre-capturing during init makes transitions
+        between batch sizes free (e.g. when one of 4 concurrent requests finishes
+        and the next decode step needs an M=3 graph).
+
+        Requires `warmup_seq_ids` (list of real allocated seq IDs) to build a valid
+        attention metadata for capture. The captured graph is reusable for any
+        future M with that batch size.
+        """
+        if not warmup_seq_ids:
+            return
+        max_bs = len(warmup_seq_ids)
+        for bs in batch_sizes:
+            if bs > max_bs or bs in self._batched_graph_runners:
+                continue
+            ids = warmup_seq_ids[:bs]
+            meta = self._kv_cache.get_attention_metadata(ids)
+            meta.max_blocks_per_seq = self._graph_max_blocks
+            self._capture_batched_graph(bs, meta)
 
     def _run_batched_decode_kernels(self, M: int, meta, stream=None):
         """Run all batched decode kernels on stream (for graph capture)."""
@@ -1832,24 +1996,74 @@ class ModelRunner:
                     stream=stream,
                 )
             elif use_multi_gemv:
-                # Batched GEMV: reads weight ONCE, computes M dot products
-                self._kernels.launch(
-                    "batched_dequant_gemv_int4",
-                    ((N + 8 - 1) // 8,),  # BGEMV_RPB=8
-                    (gemv_block,),
-                    out, weight_t, scales_t, zeros_t, inp,
-                    M, N, K, weight.group_size,
-                    stream=stream,
+                # ROCm: use portable wave-64 kernel (2.13x faster than C-string bgemv at M=4).
+                # Constraints: K%8==0 (u32-aligned), group_size>=8 (lane K-window fits a group).
+                use_wave64_bgemv = (
+                    self._backend == "rocm"
+                    and (K % 8 == 0)
+                    and (weight.group_size >= 8)
                 )
+                # 128-bit (uint4) variant: tighter constraints, ~1.10x avg over wave-64.
+                use_wave64_v2 = (
+                    use_wave64_bgemv
+                    and (K % 32 == 0)
+                    and (weight.group_size % 32 == 0)
+                )
+                if use_wave64_v2:
+                    self._kernels.launch(
+                        "bgemv_int4_wave64_v2",
+                        ((N + 7) // 8, 1, 1),
+                        (512, 1, 1),
+                        out, weight_t, scales_t, zeros_t, inp,
+                        M, N, K, weight.group_size,
+                        stream=stream,
+                    )
+                elif use_wave64_bgemv:
+                    self._kernels.launch(
+                        "bgemv_int4_wave64",
+                        ((N + 7) // 8, 1, 1),
+                        (512, 1, 1),
+                        out, weight_t, scales_t, zeros_t, inp,
+                        M, N, K, weight.group_size,
+                        stream=stream,
+                    )
+                else:
+                    # Batched GEMV: reads weight ONCE, computes M dot products (NVIDIA path).
+                    self._kernels.launch(
+                        "batched_dequant_gemv_int4",
+                        ((N + 8 - 1) // 8,),  # BGEMV_RPB=8
+                        (gemv_block,),
+                        out, weight_t, scales_t, zeros_t, inp,
+                        M, N, K, weight.group_size,
+                        stream=stream,
+                    )
             else:
-                self._kernels.launch(
-                    "tiled_dequant_matmul_int4",
-                    ((N + 31) // 32, (M + 31) // 32),
-                    (32, 32),
-                    out, weight_t, scales_t, zeros_t, inp,
-                    M, N, K, weight.group_size,
-                    stream=stream,
+                # ROCm/CDNA: use MFMA-accelerated v3 kernel when shapes are compatible.
+                # Constraints: K%64==0 (CHUNK_K=64) and group_size%16==0 (lane-window assumption).
+                # All real .zse models satisfy this (Qwen2.5-32B: K=5120/27648, gs=128).
+                use_mfma_v3 = (
+                    self._backend == "rocm"
+                    and (K % 64 == 0)
+                    and (weight.group_size % 16 == 0)
                 )
+                if use_mfma_v3:
+                    self._kernels.launch(
+                        "mfma_dequant_matmul_int4_v3",
+                        ((N + 15) // 16, (M + 15) // 16),
+                        (64, 1, 1),
+                        out, weight_t, scales_t, zeros_t, inp,
+                        M, N, K, weight.group_size,
+                        stream=stream,
+                    )
+                else:
+                    self._kernels.launch(
+                        "tiled_dequant_matmul_int4",
+                        ((N + 31) // 32, (M + 31) // 32),
+                        (32, 32),
+                        out, weight_t, scales_t, zeros_t, inp,
+                        M, N, K, weight.group_size,
+                        stream=stream,
+                    )
         elif weight.dtype == "int8":
             weight_t = self._make_tensor_from_ptr(weight.data_ptr, (N, K))
             scales_t = self._make_tensor_from_ptr(weight.scales_ptr, (N, K // weight.group_size))
@@ -1987,3 +2201,415 @@ class ModelRunner:
         t = Tensor(shape=(pool.total_bytes,))
         t._data_ptr = pool._gpu_base_ptr
         return t
+
+
+class TPModelRunner(ModelRunner):
+    """Tensor-parallel model runner — sharded forward pass with NCCL all-reduce.
+
+    Subclasses ModelRunner and overrides the transformer block methods to insert
+    all-reduce operations at the correct points:
+    - After O projection (row parallel) → all-reduce before residual add
+    - After Down projection (row parallel) → all-reduce before residual add
+
+    Each GPU processes its local shard of Q/K/V/Gate/Up heads, then combines
+    partial sums via all-reduce for O and Down projections.
+
+    The local dimensions are already adjusted by the config overrides:
+    - num_heads → num_heads // tp_size
+    - num_kv_heads → num_kv_heads // tp_size
+    - intermediate_size → intermediate_size // tp_size
+    """
+
+    def __init__(
+        self,
+        config,
+        weights,
+        kv_cache,
+        scratch,
+        gpu_mem,
+        kernels,
+        tp_group,
+        lora_manager=None,
+    ):
+        # Adjust config dimensions for this TP rank before parent init
+        # The weights are already sharded by TPWeightLoader, but the ModelRunner
+        # needs to know the local dimensions for kernel launches
+        self._tp_group = tp_group
+        self._tp_size = tp_group.tp_size
+        self._tp_rank = tp_group.rank
+
+        # Store original full-model dimensions for all-reduce sizing
+        self._full_hidden_size = config.hidden_size
+        self._full_num_heads = config.num_heads
+        self._full_num_kv_heads = config.num_kv_heads
+        self._full_intermediate_size = config.intermediate_size
+
+        # Create a modified config with local dimensions
+        # (Don't mutate the original — other components may need full dims)
+        from copy import copy
+        local_config = copy(config)
+        local_config.num_heads = config.num_heads // tp_group.tp_size
+        local_config.num_kv_heads = config.num_kv_heads // tp_group.tp_size
+        local_config.intermediate_size = config.intermediate_size // tp_group.tp_size
+        # hidden_size stays the same — it's the full residual stream width
+
+        super().__init__(
+            config=local_config,
+            weights=weights,
+            kv_cache=kv_cache,
+            scratch=scratch,
+            gpu_mem=gpu_mem,
+            kernels=kernels,
+            lora_manager=lora_manager,
+        )
+
+        # Allocate scratch buffer for all-reduce (reuse hidden buffer if possible)
+        # All-reduce operates in-place on hidden_size fp16 elements
+        self._allreduce_count = self._full_hidden_size  # Elements, not bytes
+
+    def _transformer_block_decode(self, layer, seq_id, position,
+                                   kv_slab, block_table_tensor,
+                                   seq_lens_tensor, meta,
+                                   lora_adapter=None):
+        """One transformer layer during decode with TP all-reduce.
+
+        Same as parent, but inserts:
+        1. all-reduce after O projection (before attention residual add)
+        2. all-reduce after Down projection (before MLP residual add)
+        """
+        seq_len = 1
+
+        # Save residual (fp32)
+        self._copy_tensor_f32(self._scratch.residual_f32, self._scratch.hidden_f32, self._hidden_size)
+
+        # Pre-attention RMSNorm — fp32→fp16 (replicated, same on all ranks)
+        attn_norm_w = self._get_layer_weight(f"model.layers.{layer}.input_layernorm.weight")
+        self._launch_rmsnorm_f32in(
+            self._scratch.norm_out, self._scratch.hidden_f32,
+            attn_norm_w, seq_len,
+        )
+
+        # QKV projection — column parallel (local heads only)
+        q_dim = self._num_heads * self._head_dim  # local q_dim
+        k_dim = self._num_kv_heads * self._head_dim  # local k_dim
+
+        q_buf = self._scratch.qkv
+        k_buf = self._scratch.attn_out
+        v_buf = self._scratch.mlp_out
+
+        self._launch_gemv_cached(q_buf, self._scratch.norm_out, layer,
+                                 "self_attn.q_proj.weight", q_dim, self._hidden_size)
+        self._launch_gemv_cached(k_buf, self._scratch.norm_out, layer,
+                                 "self_attn.k_proj.weight", k_dim, self._hidden_size)
+        self._launch_gemv_cached(v_buf, self._scratch.norm_out, layer,
+                                 "self_attn.v_proj.weight", k_dim, self._hidden_size)
+
+        # Biases (also sharded for column parallel QKV)
+        self._apply_bias_if_present(q_buf, layer, "self_attn.q_proj.bias", 1, q_dim)
+        self._apply_bias_if_present(k_buf, layer, "self_attn.k_proj.bias", 1, k_dim)
+        self._apply_bias_if_present(v_buf, layer, "self_attn.v_proj.bias", 1, k_dim)
+
+        # RoPE (local heads)
+        half_dim = self._head_dim // 2
+        total_rope = max(self._num_heads, self._num_kv_heads) * half_dim
+        self._kernels.launch(
+            "rotary_embedding",
+            ((total_rope + 255) // 256,),
+            (256,),
+            q_buf, k_buf,
+            1, self._num_heads, self._num_kv_heads,
+            self._head_dim, self._decode_pos_buf, self._rope_theta,
+        )
+
+        # KV cache write (local heads)
+        total_kv = self._num_kv_heads * self._head_dim
+        self._kernels.launch(
+            "kv_cache_write",
+            ((total_kv + 255) // 256,),
+            (256,),
+            kv_slab, k_buf, v_buf, block_table_tensor,
+            1, self._num_kv_heads, self._head_dim,
+            self._kv_cache.block_size,
+            meta.max_blocks_per_seq, self._num_layers, layer, self._decode_pos_buf,
+        )
+
+        # Paged attention (local heads)
+        total_tokens = meta.seq_lengths[0]
+        shared_mem = total_tokens * 4
+        self._kernels.launch(
+            "paged_attention",
+            (1, self._num_heads),
+            (min(256, self._head_dim),),
+            self._scratch.attn_out, q_buf, kv_slab,
+            block_table_tensor, seq_lens_tensor,
+            self._num_heads, self._num_kv_heads, self._head_dim,
+            self._kv_cache.block_size,
+            meta.max_blocks_per_seq, self._num_layers, layer,
+            self._scale,
+            shared_mem_bytes=shared_mem,
+        )
+
+        # O projection — row parallel (input is local attn output, output is partial hidden)
+        o_proj = self._get_layer_weight(f"model.layers.{layer}.self_attn.o_proj.weight")
+        self._launch_matmul(
+            self._scratch.hidden, self._scratch.attn_out, o_proj,
+            1, self._hidden_size, q_dim,  # K = local q_dim (sharded input)
+        )
+
+        # *** ALL-REDUCE after O projection ***
+        # Each rank has a partial sum of hidden_size elements. Sum across ranks.
+        self._tp_group.all_reduce_inplace(
+            self._scratch.hidden.data_ptr,
+            self._hidden_size,
+            dtype="float16",
+        )
+
+        # Residual: hidden_f32 = residual_f32 + fp16 hidden (now complete after all-reduce)
+        self._kernels.launch(
+            "residual_add_f32",
+            ((self._hidden_size + 255) // 256,),
+            (256,),
+            self._scratch.hidden_f32, self._scratch.residual_f32, self._scratch.hidden,
+            self._hidden_size,
+        )
+
+        # Post-attention RMSNorm — fp32→fp16 (replicated)
+        mlp_norm_w = self._get_layer_weight(f"model.layers.{layer}.post_attention_layernorm.weight")
+        self._launch_rmsnorm_f32in(
+            self._scratch.norm_out, self._scratch.hidden_f32,
+            mlp_norm_w, 1,
+        )
+
+        # Gate + Up — column parallel (local intermediate shard)
+        gate_proj = self._get_layer_weight(f"model.layers.{layer}.mlp.gate_proj.weight")
+        up_proj = self._get_layer_weight(f"model.layers.{layer}.mlp.up_proj.weight")
+        down_proj = self._get_layer_weight(f"model.layers.{layer}.mlp.down_proj.weight")
+
+        use_fused_gemv = (gate_proj.dtype == "int4" and lora_adapter is None)
+        if use_fused_gemv:
+            N = self._intermediate_size  # local shard
+            K = self._hidden_size
+            gate_wt = self._make_tensor_from_ptr(gate_proj.data_ptr, (N, K // 2))
+            gate_sc = self._make_tensor_from_ptr(gate_proj.scales_ptr, (N, K // gate_proj.group_size))
+            gate_zr = self._make_tensor_from_ptr(gate_proj.zeros_ptr, (N, K // gate_proj.group_size))
+            up_wt = self._make_tensor_from_ptr(up_proj.data_ptr, (N, K // 2))
+            up_sc = self._make_tensor_from_ptr(up_proj.scales_ptr, (N, K // up_proj.group_size))
+            up_zr = self._make_tensor_from_ptr(up_proj.zeros_ptr, (N, K // up_proj.group_size))
+            fgu_rpb = 2 if self._backend == "rocm" else 4
+            self._kernels.launch(
+                "fused_gate_up_gemv_int4",
+                ((N + fgu_rpb - 1) // fgu_rpb,),
+                (256,),
+                self._scratch.mlp_gate, self._scratch.mlp_up,
+                gate_wt, gate_sc, gate_zr,
+                up_wt, up_sc, up_zr,
+                self._scratch.norm_out,
+                N, K, gate_proj.group_size,
+            )
+        else:
+            self._launch_matmul(self._scratch.mlp_gate, self._scratch.norm_out, gate_proj,
+                                1, self._intermediate_size, self._hidden_size)
+            self._launch_matmul(self._scratch.mlp_up, self._scratch.norm_out, up_proj,
+                                1, self._intermediate_size, self._hidden_size)
+
+        # SiLU (local intermediate shard)
+        n_mlp = self._intermediate_size
+        self._kernels.launch(
+            "silu_mul",
+            ((n_mlp + 255) // 256,),
+            (256,),
+            self._scratch.mlp_gate, self._scratch.mlp_gate, self._scratch.mlp_up, n_mlp,
+        )
+
+        # Down projection — row parallel (input is local intermediate, output is partial hidden)
+        self._launch_matmul(
+            self._scratch.hidden, self._scratch.mlp_gate, down_proj,
+            1, self._hidden_size, self._intermediate_size,  # K = local intermediate (sharded)
+        )
+
+        # *** ALL-REDUCE after Down projection ***
+        self._tp_group.all_reduce_inplace(
+            self._scratch.hidden.data_ptr,
+            self._hidden_size,
+            dtype="float16",
+        )
+
+        # MLP residual: hidden_f32 += fp16 hidden (now complete after all-reduce)
+        n_res = self._hidden_size
+        self._kernels.launch(
+            "residual_add_f32",
+            ((n_res + 255) // 256,),
+            (256,),
+            self._scratch.hidden_f32, self._scratch.hidden_f32, self._scratch.hidden,
+            n_res,
+        )
+
+    def _transformer_block_prefill(self, layer, seq_id, seq_len,
+                                    kv_slab, block_table_tensor,
+                                    seq_lens_tensor, meta,
+                                    lora_adapter=None):
+        """Prefill transformer block with TP all-reduce.
+
+        Same structure as decode but with seq_len > 1 and matmul instead of GEMV.
+        All-reduce points are identical: after O proj and after Down proj.
+        """
+        # For prefill, delegate to parent but intercept at the right points.
+        # Since the parent method is complex, we call it and rely on the fact
+        # that the sharded weights produce correct partial results.
+        # However, we need to insert all-reduce, so we must override fully.
+
+        # Save residual
+        self._copy_tensor_f32(self._scratch.residual_f32, self._scratch.hidden_f32,
+                             self._hidden_size * seq_len)
+
+        # Pre-attention RMSNorm
+        attn_norm_w = self._get_layer_weight(f"model.layers.{layer}.input_layernorm.weight")
+        self._launch_rmsnorm_f32in(
+            self._scratch.norm_out, self._scratch.hidden_f32,
+            attn_norm_w, seq_len,
+        )
+
+        # QKV projections — column parallel
+        q_dim = self._num_heads * self._head_dim
+        k_dim = self._num_kv_heads * self._head_dim
+
+        q_proj = self._get_layer_weight(f"model.layers.{layer}.self_attn.q_proj.weight")
+        k_proj = self._get_layer_weight(f"model.layers.{layer}.self_attn.k_proj.weight")
+        v_proj = self._get_layer_weight(f"model.layers.{layer}.self_attn.v_proj.weight")
+
+        self._launch_matmul(self._scratch.qkv, self._scratch.norm_out, q_proj,
+                           seq_len, q_dim, self._hidden_size)
+        self._launch_matmul(self._scratch.attn_out, self._scratch.norm_out, k_proj,
+                           seq_len, k_dim, self._hidden_size)
+        self._launch_matmul(self._scratch.mlp_out, self._scratch.norm_out, v_proj,
+                           seq_len, k_dim, self._hidden_size)
+
+        # Biases
+        self._apply_bias_if_present(self._scratch.qkv, layer, "self_attn.q_proj.bias", seq_len, q_dim)
+        self._apply_bias_if_present(self._scratch.attn_out, layer, "self_attn.k_proj.bias", seq_len, k_dim)
+        self._apply_bias_if_present(self._scratch.mlp_out, layer, "self_attn.v_proj.bias", seq_len, k_dim)
+
+        # RoPE
+        half_dim = self._head_dim // 2
+        total_rope = seq_len * max(self._num_heads, self._num_kv_heads) * half_dim
+        self._kernels.launch(
+            "rotary_embedding",
+            ((total_rope + 255) // 256,),
+            (256,),
+            self._scratch.qkv, self._scratch.attn_out,
+            seq_len, self._num_heads, self._num_kv_heads,
+            self._head_dim, self._prefill_pos_zero_buf, self._rope_theta,
+        )
+
+        # KV cache write
+        total_kv = seq_len * self._num_kv_heads * self._head_dim
+        self._kernels.launch(
+            "kv_cache_write",
+            ((total_kv + 255) // 256,),
+            (256,),
+            kv_slab, self._scratch.attn_out, self._scratch.mlp_out,
+            block_table_tensor,
+            seq_len, self._num_kv_heads, self._head_dim,
+            self._kv_cache.block_size,
+            meta.max_blocks_per_seq, self._num_layers, layer, self._prefill_pos_zero_buf,
+        )
+
+        # Prefill attention (local heads)
+        if self._kernels.has_kernel("prefill_attention"):
+            self._kernels.launch(
+                "prefill_attention",
+                (seq_len, self._num_heads),
+                (min(256, self._head_dim),),
+                self._scratch.attn_out, self._scratch.qkv, self._scratch.attn_out,
+                self._scratch.mlp_out,
+                seq_len, self._num_heads, self._num_kv_heads, self._head_dim,
+                self._scale,
+            )
+        else:
+            # Fallback to paged attention
+            total_tokens = meta.seq_lengths[0] if meta.seq_lengths else seq_len
+            shared_mem = total_tokens * 4
+            self._kernels.launch(
+                "paged_attention",
+                (seq_len, self._num_heads),
+                (min(256, self._head_dim),),
+                self._scratch.attn_out, self._scratch.qkv, kv_slab,
+                block_table_tensor, seq_lens_tensor,
+                self._num_heads, self._num_kv_heads, self._head_dim,
+                self._kv_cache.block_size,
+                meta.max_blocks_per_seq, self._num_layers, layer,
+                self._scale,
+                shared_mem_bytes=shared_mem,
+            )
+
+        # O projection — row parallel
+        o_proj = self._get_layer_weight(f"model.layers.{layer}.self_attn.o_proj.weight")
+        self._launch_matmul(
+            self._scratch.hidden, self._scratch.attn_out, o_proj,
+            seq_len, self._hidden_size, q_dim,
+        )
+
+        # *** ALL-REDUCE after O projection ***
+        self._tp_group.all_reduce_inplace(
+            self._scratch.hidden.data_ptr,
+            self._hidden_size * seq_len,
+            dtype="float16",
+        )
+
+        # Attention residual
+        total_res = self._hidden_size * seq_len
+        self._kernels.launch(
+            "residual_add_f32",
+            ((total_res + 255) // 256,),
+            (256,),
+            self._scratch.hidden_f32, self._scratch.residual_f32, self._scratch.hidden,
+            total_res,
+        )
+
+        # Post-attention RMSNorm
+        mlp_norm_w = self._get_layer_weight(f"model.layers.{layer}.post_attention_layernorm.weight")
+        self._launch_rmsnorm_f32in(
+            self._scratch.norm_out, self._scratch.hidden_f32,
+            mlp_norm_w, seq_len,
+        )
+
+        # Gate + Up — column parallel
+        gate_proj = self._get_layer_weight(f"model.layers.{layer}.mlp.gate_proj.weight")
+        up_proj = self._get_layer_weight(f"model.layers.{layer}.mlp.up_proj.weight")
+        down_proj = self._get_layer_weight(f"model.layers.{layer}.mlp.down_proj.weight")
+
+        self._launch_matmul(self._scratch.mlp_gate, self._scratch.norm_out, gate_proj,
+                           seq_len, self._intermediate_size, self._hidden_size)
+        self._launch_matmul(self._scratch.mlp_up, self._scratch.norm_out, up_proj,
+                           seq_len, self._intermediate_size, self._hidden_size)
+
+        # SiLU
+        n_mlp = self._intermediate_size * seq_len
+        self._kernels.launch(
+            "silu_mul",
+            ((n_mlp + 255) // 256,),
+            (256,),
+            self._scratch.mlp_gate, self._scratch.mlp_gate, self._scratch.mlp_up, n_mlp,
+        )
+
+        # Down projection — row parallel
+        self._launch_matmul(
+            self._scratch.hidden, self._scratch.mlp_gate, down_proj,
+            seq_len, self._hidden_size, self._intermediate_size,
+        )
+
+        # *** ALL-REDUCE after Down projection ***
+        self._tp_group.all_reduce_inplace(
+            self._scratch.hidden.data_ptr,
+            self._hidden_size * seq_len,
+            dtype="float16",
+        )
+
+        # MLP residual
+        self._kernels.launch(
+            "residual_add_f32",
+            ((total_res + 255) // 256,),
+            (256,),
+            self._scratch.hidden_f32, self._scratch.hidden_f32, self._scratch.hidden,
+            total_res,
+        )

@@ -48,11 +48,13 @@ class ZSEServer:
         db_path: str = "~/.zse/server.db",
         model_name: str = "zse-model",
         quiet: bool = False,
+        tp_size: int = 1,
     ):
         self._host = host
         self._port = port
         self._quiet = quiet
         self._model_name = model_name
+        self._tp_size = tp_size
         self._server = None
         self._engine = None
         self._engine_thread = None
@@ -65,7 +67,7 @@ class ZSEServer:
 
         # Load engine if model provided
         if model_path:
-            self._init_engine(model_path)
+            self._init_engine(model_path, tp_size=tp_size)
 
         # Router
         self._router = Router()
@@ -90,6 +92,14 @@ class ZSEServer:
             store=rag_store,
             tokenizer=tokenizer,
         )
+        # Wire the inference LLM into RAG for dense embeddings + LLM reranking.
+        # Zero extra deps / VRAM \u2014 reuses the model already loaded for serving.
+        try:
+            model_runner = getattr(self._engine, "_model_runner", None)
+            if model_runner is not None:
+                self._rag_engine.set_model_runner(model_runner)
+        except Exception:
+            pass
         rag_api = RAGAPI(self._auth, rag_engine=self._rag_engine)
         rag_api.register(self._router)
 
@@ -103,13 +113,24 @@ class ZSEServer:
         # CORS preflight
         self._router.add("OPTIONS", "/*", self._handle_options)
 
-    def _init_engine(self, model_path: str):
-        """Initialize the inference engine."""
-        from zse_engine.zstreamer.engine import ZStreamerEngine
-        self._engine = ZStreamerEngine(
-            model_path=model_path,
-            quiet=self._quiet,
-        )
+    def _init_engine(self, model_path: str, tp_size: int = 1):
+        """Initialize the inference engine.
+
+        Uses TPEngine for multi-GPU (tp_size > 1), ZStreamerEngine for single GPU.
+        """
+        if tp_size > 1:
+            from zse_engine.orchestrator.tp_engine import TPEngine
+            self._engine = TPEngine(
+                model_path=model_path,
+                tp_size=tp_size,
+                quiet=self._quiet,
+            )
+        else:
+            from zse_engine.zstreamer.engine import ZStreamerEngine
+            self._engine = ZStreamerEngine(
+                model_path=model_path,
+                quiet=self._quiet,
+            )
 
     async def _handle_health(self, request: Request) -> Response:
         """Health check endpoint."""

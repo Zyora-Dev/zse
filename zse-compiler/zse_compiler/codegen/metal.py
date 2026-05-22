@@ -16,6 +16,7 @@ from zse_compiler.ir.nodes import (
     IRWarpShuffle, IRWarpVote, IRWarpReduce, IRBlockReduce,
     IRLoadFloat4, IRStoreFloat4, IRLoadHalf2, IRStoreHalf2,
     IRTileLoad, IRTileStore, IRConst,
+    IRUnpackInt4, IRUnpackUint4,
 )
 from zse_compiler.types.dtypes import DTYPE_MAP
 
@@ -68,16 +69,24 @@ class MetalCodegen(BaseCodegen):
         return f"kernel void {func.name}(\n    {params_str})"
 
     def _param_to_str(self, param: IRParam) -> str:
-        if param.dtype in ("tensor", "Tensor"):
+        if param.dtype in ("tensor", "Tensor", "fp32_tensor", "float32_tensor"):
             return f"device float* {param.name} [[buffer({self._get_buffer_index(param)})]]"
-        elif param.dtype in ("half_tensor", "fp16_tensor"):
+        elif param.dtype in ("half_tensor", "fp16_tensor", "float16_tensor"):
             return f"device half* {param.name} [[buffer({self._get_buffer_index(param)})]]"
+        elif param.dtype in ("bf16_tensor", "bfloat16_tensor"):
+            return f"device bfloat* {param.name} [[buffer({self._get_buffer_index(param)})]]"
         elif param.dtype == "uint8_tensor":
             return f"device uchar* {param.name} [[buffer({self._get_buffer_index(param)})]]"
         elif param.dtype == "int8_tensor":
             return f"device char* {param.name} [[buffer({self._get_buffer_index(param)})]]"
+        elif param.dtype == "uint16_tensor":
+            return f"device ushort* {param.name} [[buffer({self._get_buffer_index(param)})]]"
+        elif param.dtype == "int16_tensor":
+            return f"device short* {param.name} [[buffer({self._get_buffer_index(param)})]]"
         elif param.dtype == "int32_tensor":
             return f"device int* {param.name} [[buffer({self._get_buffer_index(param)})]]"
+        elif param.dtype == "uint32_tensor":
+            return f"device uint* {param.name} [[buffer({self._get_buffer_index(param)})]]"
         elif param.dtype in DTYPE_MAP:
             metal_type = DTYPE_MAP[param.dtype].metal_type
             return f"device {metal_type}* {param.name} [[buffer({self._get_buffer_index(param)})]]"
@@ -96,6 +105,9 @@ class MetalCodegen(BaseCodegen):
 
     def generate(self, func) -> str:
         self._buffer_counter = 0
+        self._block_reduce_counter = 0
+        self._unpack_int4_counter = 0
+        self._unpack_uint4_counter = 0
         return super().generate(func)
 
     def _emit_thread_idx(self, axis: int) -> str:
@@ -211,19 +223,25 @@ class MetalCodegen(BaseCodegen):
         val = self._emit_expr(node.value)
         combine = REDUCE_OPS[node.op]
         identity = {"sum": "0.0f", "max": "-INFINITY", "min": "INFINITY"}[node.op]
-        var = f"_zse_br_{id(node) % 10000}"
+        if not hasattr(self, "_block_reduce_counter"):
+            self._block_reduce_counter = 0
+        self._block_reduce_counter += 1
+        cid = self._block_reduce_counter
+        var = f"_zse_br_{cid}"
+        bsmem = f"_zse_bsmem_{cid}"
+        nsimd = f"_zse_nsimd_{cid}"
 
         # Metal: use simd_sum/max/min for stage 1, then threadgroup memory
         simd_reduce = {"sum": "simd_sum", "max": "simd_max", "min": "simd_min"}[node.op]
 
         lines = []
         lines.append(f"[&]() {{")
-        lines.append(f"  threadgroup float _zse_bsmem[32];")
+        lines.append(f"  threadgroup float {bsmem}[32];")
         lines.append(f"  float {var} = {simd_reduce}({val});")
-        lines.append(f"  if (_zse_simd_lane == 0) _zse_bsmem[_zse_simd_id] = {var};")
+        lines.append(f"  if (_zse_simd_lane == 0) {bsmem}[_zse_simd_id] = {var};")
         lines.append(f"  threadgroup_barrier(mem_flags::mem_threadgroup);")
-        lines.append(f"  uint _zse_nsimd = (_zse_bdim.x + {SIMD_WIDTH - 1}) / {SIMD_WIDTH};")
-        lines.append(f"  {var} = (_zse_simd_lane < _zse_nsimd) ? _zse_bsmem[_zse_simd_lane] : {identity};")
+        lines.append(f"  uint {nsimd} = (_zse_bdim.x + {SIMD_WIDTH - 1}) / {SIMD_WIDTH};")
+        lines.append(f"  {var} = (_zse_simd_lane < {nsimd}) ? {bsmem}[_zse_simd_lane] : {identity};")
         lines.append(f"  {var} = {simd_reduce}({var});")
         lines.append(f"  return {var};")
         lines.append(f"}}()")
@@ -265,8 +283,17 @@ class MetalCodegen(BaseCodegen):
         ts = self._emit_expr(node.tile_size)
         sbuf = self._emit_expr(node.shared_buf) if node.shared_buf else "_zse_tile"
         lines = []
-        lines.append(f"{sbuf}[_zse_tid.y * {ts} + _zse_tid.x] = "
-                      f"{tensor}[({tr} + _zse_tid.y) * {ts} + ({tc} + _zse_tid.x)];")
+        if node.bound_row is not None and node.bound_col is not None:
+            br = self._emit_expr(node.bound_row)
+            bc = self._emit_expr(node.bound_col)
+            lines.append(f"{{ uint _zse_gr = ({tr}) + _zse_tid.y;")
+            lines.append(f"  uint _zse_gc = ({tc}) + _zse_tid.x;")
+            lines.append(f"  {sbuf}[_zse_tid.y * {ts} + _zse_tid.x] = "
+                          f"(_zse_gr < ({br}) && _zse_gc < ({bc})) ? "
+                          f"{tensor}[_zse_gr * ({bc}) + _zse_gc] : 0.0f; }}")
+        else:
+            lines.append(f"{sbuf}[_zse_tid.y * {ts} + _zse_tid.x] = "
+                          f"{tensor}[({tr} + _zse_tid.y) * {ts} + ({tc} + _zse_tid.x)];")
         lines.append(f"threadgroup_barrier(mem_flags::mem_threadgroup);")
         return "\n".join(self._indented(l) for l in lines)
 
@@ -277,14 +304,40 @@ class MetalCodegen(BaseCodegen):
         ts = self._emit_expr(node.tile_size)
         sbuf = self._emit_expr(node.shared_buf)
         lines = []
-        lines.append(f"{tensor}[({tr} + _zse_tid.y) * {ts} + ({tc} + _zse_tid.x)] = "
-                      f"{sbuf}[_zse_tid.y * {ts} + _zse_tid.x];")
+        if node.bound_row is not None and node.bound_col is not None:
+            br = self._emit_expr(node.bound_row)
+            bc = self._emit_expr(node.bound_col)
+            lines.append(f"{{ uint _zse_gr = ({tr}) + _zse_tid.y;")
+            lines.append(f"  uint _zse_gc = ({tc}) + _zse_tid.x;")
+            lines.append(f"  if (_zse_gr < ({br}) && _zse_gc < ({bc})) "
+                          f"{tensor}[_zse_gr * ({bc}) + _zse_gc] = "
+                          f"{sbuf}[_zse_tid.y * {ts} + _zse_tid.x]; }}")
+        else:
+            lines.append(f"{tensor}[({tr} + _zse_tid.y) * {ts} + ({tc} + _zse_tid.x)] = "
+                          f"{sbuf}[_zse_tid.y * {ts} + _zse_tid.x];")
         lines.append(f"threadgroup_barrier(mem_flags::mem_threadgroup);")
         return "\n".join(self._indented(l) for l in lines)
 
     def _default_var_type(self) -> str:
         """Metal doesn't support 'auto' — use float as default."""
         return "float"
+
+    def _emit_local_array_decl(self, node) -> str:
+        """Metal stack-local arrays live in the `thread` address space."""
+        metal_type = DTYPE_MAP[node.dtype].metal_type if node.dtype in DTYPE_MAP else "float"
+        self._local_vars.add(node.name)
+        return f"thread {metal_type} {node.name}[{node.size}];"
+
+    def _emit_reinterpret(self, node) -> str:
+        """Metal pointer cast — preserve the `device` address space
+        (the common case for reinterpreting a weight-buffer kernel arg)."""
+        metal_type = DTYPE_MAP[node.dtype].metal_type if node.dtype in DTYPE_MAP else "float"
+        operand = self._emit_expr(node.operand)
+        return f"((device {metal_type}*)({operand}))"
+
+    def _reinterpret_lhs_type(self, dtype: str) -> str:
+        metal_type = DTYPE_MAP[dtype].metal_type if dtype in DTYPE_MAP else "float"
+        return f"device {metal_type}*"
 
     # --- FP16 conversion ---
 
@@ -295,6 +348,47 @@ class MetalCodegen(BaseCodegen):
     def _emit_float_to_half(self, node) -> str:
         val = self._emit_expr(node.value)
         return f"half({val})"
+
+    # --- INT4 nibble unpack (Tier-2 primitive) ---
+
+    def _emit_unpack_int4(self, node) -> str:
+        if not hasattr(self, "_unpack_int4_counter"):
+            self._unpack_int4_counter = 0
+        self._unpack_int4_counter += 1
+        cid = self._unpack_int4_counter
+        packed = self._emit_expr(node.packed)
+        out_buf = self._emit_expr(node.out_buf)
+        base = self._emit_expr(node.base_idx)
+        p = f"_zse_u4_p_{cid}"
+        o = f"_zse_u4_o_{cid}"
+        # Metal scalar fallback — shift+mask+sign-extend.
+        return (
+            f"{{ uint {p} = (uint)({packed}); int {o} = (int)({base});\n"
+            + self._indented(f"  for (int _zse_u4_i_{cid} = 0; _zse_u4_i_{cid} < 8; ++_zse_u4_i_{cid}) {{\n")
+            + self._indented(f"    int _zse_u4_n_{cid} = (int)(({p} >> (_zse_u4_i_{cid} * 4)) & 0xF);\n")
+            + self._indented(f"    _zse_u4_n_{cid} = (_zse_u4_n_{cid} ^ 0x8) - 0x8;\n")
+            + self._indented(f"    ({out_buf})[{o} + _zse_u4_i_{cid}] = _zse_u4_n_{cid};\n")
+            + self._indented(f"  }} }}")
+        )
+
+    def _emit_unpack_uint4(self, node) -> str:
+        if not hasattr(self, "_unpack_uint4_counter"):
+            self._unpack_uint4_counter = 0
+        self._unpack_uint4_counter += 1
+        cid = self._unpack_uint4_counter
+        packed = self._emit_expr(node.packed)
+        out_buf = self._emit_expr(node.out_buf)
+        base = self._emit_expr(node.base_idx)
+        p = f"_zse_uu4_p_{cid}"
+        o = f"_zse_uu4_o_{cid}"
+        # Metal scalar — shift+mask, no sign-extend.
+        return (
+            f"{{ uint {p} = (uint)({packed}); int {o} = (int)({base});\n"
+            + self._indented(f"  for (int _zse_uu4_i_{cid} = 0; _zse_uu4_i_{cid} < 8; ++_zse_uu4_i_{cid}) {{\n")
+            + self._indented(f"    int _zse_uu4_n_{cid} = (int)(({p} >> (_zse_uu4_i_{cid} * 4)) & 0xF);\n")
+            + self._indented(f"    ({out_buf})[{o} + _zse_uu4_i_{cid}] = _zse_uu4_n_{cid};\n")
+            + self._indented(f"  }} }}")
+        )
 
     # --- Dynamic Shared Memory ---
 

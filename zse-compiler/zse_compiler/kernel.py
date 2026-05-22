@@ -129,19 +129,22 @@ def kernel(func: Callable) -> KernelFunction:
     return KernelFunction(func)
 
 
-def fuse(kernels: list, name: str = None) -> 'KernelFunction':
+def fuse(kernels: list, name: str = None, chain: list = None) -> 'KernelFunction':
     """Fuse multiple element-wise kernels into a single kernel.
 
     Eliminates intermediate global memory reads/writes between kernels.
 
     Usage:
         fused = zse.fuse([add_bias, silu], name="add_bias_silu")
+        # For kernels with multiple input tensors, specify which one
+        # receives the previous kernel's output:
+        fused = zse.fuse([matmul, residual_add], chain=["x"])
         fused.launch(grid=..., block=..., args=(...))
     """
     from zse_compiler.ir.fusion import FusionPass
 
     fusion = FusionPass()
-    fused_ir = fusion.fuse(kernels, name=name)
+    fused_ir = fusion.fuse(kernels, name=name, chain=chain)
 
     # Create a KernelFunction wrapper for the fused IR
     fused = object.__new__(KernelFunction)

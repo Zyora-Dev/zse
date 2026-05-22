@@ -21,7 +21,9 @@ __version__ = "0.1.0"
 
 # Types
 from zse_compiler.types.dtypes import (
-    DType, float16, float32, bfloat16, int32, int8, uint8, int4, uint4,
+    DType, float16, float32, bfloat16,
+    int32, int16, int8, uint32, uint16, uint8,
+    int4, uint4,
 )
 from zse_compiler.types.tensor import Tensor, empty, zeros
 
@@ -44,6 +46,15 @@ from zse_compiler.types.primitives import (
     load_float4, store_float4, load_half2, store_half2,
     # Tiling
     tile_load, tile_store,
+    # INT4 nibble unpack
+    unpack_int4,
+    unpack_uint4,
+    # Local register array + pointer reinterpret (Tier-3)
+    local_array,
+    reinterpret,
+    # AMD CDNA MFMA matrix cores (Tier-4)
+    mfma_f32_16x16x16_f16,
+    mfma_f32_32x32x8_f16,
 )
 
 # Runtime
@@ -59,7 +70,8 @@ __all__ = [
     "kernel", "KernelFunction",
     # Types
     "DType", "Tensor", "empty", "zeros",
-    "float16", "float32", "bfloat16", "int32", "int8", "uint8", "int4", "uint4",
+    "float16", "float32", "bfloat16",
+    "int32", "int16", "int8", "uint32", "uint16", "uint8", "int4", "uint4",
     # Primitives
     "thread_id", "block_id", "block_dim", "grid_dim", "global_id",
     "shared_memory", "syncthreads",
@@ -72,6 +84,12 @@ __all__ = [
     "block_reduce_sum", "block_reduce_max", "block_reduce_min",
     "load_float4", "store_float4", "load_half2", "store_half2",
     "tile_load", "tile_store",
+    "unpack_int4",
+    "unpack_uint4",
+    "local_array",
+    "reinterpret",
+    "mfma_f32_16x16x16_f16",
+    "mfma_f32_32x32x8_f16",
     # Runtime
     "detect_backend", "get_devices", "DeviceInfo", "GPUMemory",
 ]

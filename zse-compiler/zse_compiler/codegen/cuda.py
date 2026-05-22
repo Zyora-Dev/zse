@@ -9,6 +9,7 @@ from zse_compiler.ir.nodes import (
     IRTileLoad, IRTileStore, IRConst,
     IRWmmaLoadA, IRWmmaLoadB, IRWmmaFill, IRWmmaMMA, IRWmmaStore,
     IRHalfToFloat, IRFloatToHalf, IRDynamicSharedMemDecl,
+    IRUnpackInt4, IRUnpackUint4,
 )
 from zse_compiler.types.dtypes import DTYPE_MAP
 
@@ -43,12 +44,21 @@ class CUDACodegen(BaseCodegen):
         super().__init__()
         self._uses_wmma = False
         self._uses_half = False
+        # Per-codegen counters — must not be class-level (would collide under parallel compilation)
+        self._block_reduce_counter = 0
+        self._wmma_frag_counter = 0
+        self._unpack_int4_counter = 0
+        self._unpack_uint4_counter = 0
 
     def generate(self, func) -> str:
         """Override to detect WMMA and half usage before generating."""
         from zse_compiler.ir.nodes import IRWmmaLoadA, IRWmmaLoadB, IRWmmaFill, IRWmmaMMA, IRWmmaStore
         self._uses_wmma = self._check_uses_wmma(func.body)
         self._uses_half = self._check_uses_half(func)
+        self._block_reduce_counter = 0
+        self._wmma_frag_counter = 0
+        self._unpack_int4_counter = 0
+        self._unpack_uint4_counter = 0
         return super().generate(func)
 
     def _check_uses_wmma(self, stmts) -> bool:
@@ -103,16 +113,24 @@ class CUDACodegen(BaseCodegen):
         return f"__global__ void {func.name}({params})"
 
     def _param_to_str(self, param: IRParam) -> str:
-        if param.dtype in ("tensor", "Tensor"):
+        if param.dtype in ("tensor", "Tensor", "fp32_tensor", "float32_tensor"):
             return f"float* __restrict__ {param.name}"
-        elif param.dtype in ("half_tensor", "fp16_tensor"):
+        elif param.dtype in ("half_tensor", "fp16_tensor", "float16_tensor"):
             return f"half* __restrict__ {param.name}"
+        elif param.dtype in ("bf16_tensor", "bfloat16_tensor"):
+            return f"__nv_bfloat16* __restrict__ {param.name}"
         elif param.dtype == "uint8_tensor":
             return f"unsigned char* __restrict__ {param.name}"
         elif param.dtype == "int8_tensor":
             return f"signed char* __restrict__ {param.name}"
+        elif param.dtype == "uint16_tensor":
+            return f"unsigned short* __restrict__ {param.name}"
+        elif param.dtype == "int16_tensor":
+            return f"short* __restrict__ {param.name}"
         elif param.dtype == "int32_tensor":
             return f"int* __restrict__ {param.name}"
+        elif param.dtype == "uint32_tensor":
+            return f"unsigned int* __restrict__ {param.name}"
         elif param.dtype in DTYPE_MAP:
             return f"{DTYPE_MAP[param.dtype].cuda_type}* __restrict__ {param.name}"
         elif param.dtype == "int":
@@ -251,11 +269,13 @@ class CUDACodegen(BaseCodegen):
         val = self._emit_expr(node.value)
         combine = REDUCE_OPS[node.op]
         identity = {"sum": "0.0f", "max": "-INFINITY", "min": "INFINITY"}[node.op]
-        var = f"_zse_br_{id(node) % 10000}"
+        self._block_reduce_counter += 1
+        bsmem = f"_zse_bsmem_{self._block_reduce_counter}"
+        var = f"_zse_br_{self._block_reduce_counter}"
 
         lines = []
         lines.append(f"[&]() {{")
-        lines.append(f"  __shared__ float _zse_bsmem[32];")  # max 32 warps per block
+        lines.append(f"  __shared__ float {bsmem}[32];")  # max 32 warps per block
         lines.append(f"  float {var} = {val};")
 
         # Stage 1: warp-level butterfly reduce
@@ -264,14 +284,17 @@ class CUDACodegen(BaseCodegen):
             lines.append(f"  {var} = {combine(var, shfl)};")
 
         # Stage 2: lane 0 of each warp writes to shared memory
-        lines.append(f"  int _zse_lid = threadIdx.x & 31;")
-        lines.append(f"  int _zse_wid = threadIdx.x >> 5;")
-        lines.append(f"  if (_zse_lid == 0) _zse_bsmem[_zse_wid] = {var};")
+        lid = f"_zse_lid_{self._block_reduce_counter}"
+        wid = f"_zse_wid_{self._block_reduce_counter}"
+        nwarps = f"_zse_nwarps_{self._block_reduce_counter}"
+        lines.append(f"  int {lid} = threadIdx.x & 31;")
+        lines.append(f"  int {wid} = threadIdx.x >> 5;")
+        lines.append(f"  if ({lid} == 0) {bsmem}[{wid}] = {var};")
         lines.append(f"  __syncthreads();")
 
         # Stage 3: first warp reduces across warps
-        lines.append(f"  int _zse_nwarps = (blockDim.x + 31) >> 5;")
-        lines.append(f"  {var} = (_zse_lid < _zse_nwarps) ? _zse_bsmem[_zse_lid] : {identity};")
+        lines.append(f"  int {nwarps} = (blockDim.x + 31) >> 5;")
+        lines.append(f"  {var} = ({lid} < {nwarps}) ? {bsmem}[{lid}] : {identity};")
         for offset in [16, 8, 4, 2, 1]:
             shfl = f"__shfl_xor_sync(0xffffffff, {var}, {offset}, 32)"
             lines.append(f"  {var} = {combine(var, shfl)};")
@@ -310,7 +333,11 @@ class CUDACodegen(BaseCodegen):
     # --- Tiling ---
 
     def _emit_tile_load(self, node: IRTileLoad) -> str:
-        """Emit cooperative tile load: each thread loads one element."""
+        """Emit cooperative tile load: each thread loads one element.
+
+        If node.bound_row / node.bound_col are set, threads outside bounds
+        write 0.0f into shared memory (safe tail handling for matmul).
+        """
         tensor = self._emit_expr(node.tensor)
         tr = self._emit_expr(node.tile_row)
         tc = self._emit_expr(node.tile_col)
@@ -319,8 +346,17 @@ class CUDACodegen(BaseCodegen):
 
         lines = []
         lines.append(f"// Cooperative tile load {ts}x{ts}")
-        lines.append(f"{sbuf}[threadIdx.y * {ts} + threadIdx.x] = "
-                      f"{tensor}[({tr} + threadIdx.y) * {ts} + ({tc} + threadIdx.x)];")
+        if node.bound_row is not None and node.bound_col is not None:
+            br = self._emit_expr(node.bound_row)
+            bc = self._emit_expr(node.bound_col)
+            lines.append(f"{{ int _zse_gr = ({tr}) + threadIdx.y;")
+            lines.append(f"  int _zse_gc = ({tc}) + threadIdx.x;")
+            lines.append(f"  {sbuf}[threadIdx.y * {ts} + threadIdx.x] = "
+                          f"(_zse_gr < ({br}) && _zse_gc < ({bc})) ? "
+                          f"{tensor}[_zse_gr * ({bc}) + _zse_gc] : 0.0f; }}")
+        else:
+            lines.append(f"{sbuf}[threadIdx.y * {ts} + threadIdx.x] = "
+                          f"{tensor}[({tr} + threadIdx.y) * {ts} + ({tc} + threadIdx.x)];")
         lines.append(f"__syncthreads();")
         return "\n".join(self._indented(l) for l in lines)
 
@@ -332,18 +368,25 @@ class CUDACodegen(BaseCodegen):
         sbuf = self._emit_expr(node.shared_buf)
 
         lines = []
-        lines.append(f"{tensor}[({tr} + threadIdx.y) * {ts} + ({tc} + threadIdx.x)] = "
-                      f"{sbuf}[threadIdx.y * {ts} + threadIdx.x];")
+        if node.bound_row is not None and node.bound_col is not None:
+            br = self._emit_expr(node.bound_row)
+            bc = self._emit_expr(node.bound_col)
+            lines.append(f"{{ int _zse_gr = ({tr}) + threadIdx.y;")
+            lines.append(f"  int _zse_gc = ({tc}) + threadIdx.x;")
+            lines.append(f"  if (_zse_gr < ({br}) && _zse_gc < ({bc})) "
+                          f"{tensor}[_zse_gr * ({bc}) + _zse_gc] = "
+                          f"{sbuf}[threadIdx.y * {ts} + threadIdx.x]; }}")
+        else:
+            lines.append(f"{tensor}[({tr} + threadIdx.y) * {ts} + ({tc} + threadIdx.x)] = "
+                          f"{sbuf}[threadIdx.y * {ts} + threadIdx.x];")
         lines.append(f"__syncthreads();")
         return "\n".join(self._indented(l) for l in lines)
 
     # --- WMMA / Tensor Core ---
 
-    _wmma_counter = 0
-
     def _emit_wmma_load_a(self, node) -> str:
-        CUDACodegen._wmma_counter += 1
-        name = node.frag_name or f"_frag_a_{CUDACodegen._wmma_counter}"
+        self._wmma_frag_counter += 1
+        name = node.frag_name or f"_frag_a_{self._wmma_frag_counter}"
         node.frag_name = name
         tensor = self._emit_expr(node.tensor)
         row = self._emit_expr(node.row)
@@ -353,8 +396,8 @@ class CUDACodegen(BaseCodegen):
                 + self._indented(f"wmma::load_matrix_sync({name}, (half*)({tensor} + {row} * {stride} + {col}), {stride});"))
 
     def _emit_wmma_load_b(self, node) -> str:
-        CUDACodegen._wmma_counter += 1
-        name = node.frag_name or f"_frag_b_{CUDACodegen._wmma_counter}"
+        self._wmma_frag_counter += 1
+        name = node.frag_name or f"_frag_b_{self._wmma_frag_counter}"
         node.frag_name = name
         tensor = self._emit_expr(node.tensor)
         row = self._emit_expr(node.row)
@@ -364,8 +407,8 @@ class CUDACodegen(BaseCodegen):
                 + self._indented(f"wmma::load_matrix_sync({name}, (half*)({tensor} + {row} * {stride} + {col}), {stride});"))
 
     def _emit_wmma_fill(self, node) -> str:
-        CUDACodegen._wmma_counter += 1
-        name = node.frag_name or f"_frag_c_{CUDACodegen._wmma_counter}"
+        self._wmma_frag_counter += 1
+        name = node.frag_name or f"_frag_c_{self._wmma_frag_counter}"
         node.frag_name = name
         val = self._emit_expr(node.value)
         return (f"wmma::fragment<wmma::accumulator, 16, 16, 16, float> {name};\n"
@@ -384,6 +427,45 @@ class CUDACodegen(BaseCodegen):
         stride = self._emit_expr(node.stride)
         frag = self._emit_expr(node.frag)
         return f"wmma::store_matrix_sync({tensor} + {row} * {stride} + {col}, {frag}, {stride}, wmma::mem_row_major);"
+
+    # --- INT4 nibble unpack (Tier-2 primitive) ---
+
+    def _emit_unpack_int4(self, node) -> str:
+        self._unpack_int4_counter += 1
+        cid = self._unpack_int4_counter
+        packed = self._emit_expr(node.packed)
+        out_buf = self._emit_expr(node.out_buf)
+        base = self._emit_expr(node.base_idx)
+        p = f"_zse_u4_p_{cid}"
+        o = f"_zse_u4_o_{cid}"
+        # Unrolled shift+mask+sign-extend. NVRTC lowers to bfe.s32 + sign extend.
+        return (
+            f"{{ unsigned int {p} = (unsigned int)({packed}); int {o} = (int)({base});\n"
+            + self._indented(f"  #pragma unroll\n")
+            + self._indented(f"  for (int _zse_u4_i_{cid} = 0; _zse_u4_i_{cid} < 8; ++_zse_u4_i_{cid}) {{\n")
+            + self._indented(f"    int _zse_u4_n_{cid} = (int)(({p} >> (_zse_u4_i_{cid} * 4)) & 0xF);\n")
+            + self._indented(f"    _zse_u4_n_{cid} = (_zse_u4_n_{cid} ^ 0x8) - 0x8;\n")
+            + self._indented(f"    ({out_buf})[{o} + _zse_u4_i_{cid}] = _zse_u4_n_{cid};\n")
+            + self._indented(f"  }} }}")
+        )
+
+    def _emit_unpack_uint4(self, node) -> str:
+        self._unpack_uint4_counter += 1
+        cid = self._unpack_uint4_counter
+        packed = self._emit_expr(node.packed)
+        out_buf = self._emit_expr(node.out_buf)
+        base = self._emit_expr(node.base_idx)
+        p = f"_zse_uu4_p_{cid}"
+        o = f"_zse_uu4_o_{cid}"
+        # Unrolled shift+mask, no sign-extend. NVRTC lowers to bfe.u32.
+        return (
+            f"{{ unsigned int {p} = (unsigned int)({packed}); int {o} = (int)({base});\n"
+            + self._indented(f"  #pragma unroll\n")
+            + self._indented(f"  for (int _zse_uu4_i_{cid} = 0; _zse_uu4_i_{cid} < 8; ++_zse_uu4_i_{cid}) {{\n")
+            + self._indented(f"    int _zse_uu4_n_{cid} = (int)(({p} >> (_zse_uu4_i_{cid} * 4)) & 0xF);\n")
+            + self._indented(f"    ({out_buf})[{o} + _zse_uu4_i_{cid}] = _zse_uu4_n_{cid};\n")
+            + self._indented(f"  }} }}")
+        )
 
     # --- FP16 conversion ---
 

@@ -17,6 +17,135 @@ from zse_compiler.runtime.compiler import RuntimeCompiler, CompiledKernel
 from zse_compiler.runtime.launcher import KernelLauncher, LaunchConfig
 from zse_compiler.types.tensor import Tensor
 
+# Portable @zse.kernel MFMA INT4 dequant matmul (Phase 3, ROCm/CDNA only).
+# Pre-generate HIP source at module import (pure Python AST->IR->HIP C; no GPU).
+from zse_engine.orchestrator.portable_kernels import mfma_dequant_matmul_int4_v3 as _mfma_v3_kernel
+try:
+    MFMA_DEQUANT_MATMUL_INT4_V3_HIP = _mfma_v3_kernel.source("rocm")
+except Exception:
+    MFMA_DEQUANT_MATMUL_INT4_V3_HIP = None
+
+# Portable @zse.kernel wave-64 batched INT4 GEMV (small-M decode, ROCm-tuned).
+# 2.13-2.26x faster than the hand-written batched_dequant_gemv_int4 at M=4 on MI300X.
+from zse_engine.orchestrator.portable_kernels import bgemv_int4_wave64 as _bgemv_wave64_kernel
+try:
+    BGEMV_INT4_WAVE64_HIP = _bgemv_wave64_kernel.source("rocm")
+except Exception:
+    BGEMV_INT4_WAVE64_HIP = None
+
+# Portable @zse.kernel fused RoPE + KV-cache-write (decode path).
+# Collapses batched_rotary_embedding + batched_kv_cache_write into one launch
+# and eliminates the K-buffer round-trip (rotated K goes straight to KV cache).
+from zse_engine.orchestrator.portable_kernels import fused_rope_kv_write as _fused_rope_kv_kernel
+try:
+    FUSED_ROPE_KV_WRITE_HIP = _fused_rope_kv_kernel.source("rocm")
+except Exception:
+    FUSED_ROPE_KV_WRITE_HIP = None
+
+
+# ============================================================================
+# Hand-tuned wave-64 INT4 GEMV with 128-bit (uint4) weight loads — ROCm only
+# ============================================================================
+# Profiler showed bgemv_int4_wave64 = 64% of decode GPU time at ~13% of MI300X
+# HBM3 peak. Root cause: 32-bit weight loads under-utilize the memory pipeline.
+# This v2 reads 128 bits (4x uint32 = 32 nibbles) per memory transaction.
+#
+# Constraints: K % 32 == 0, group_size % 32 == 0 (both true for Qwen2.5-32B:
+# K in {5120, 27648}, group_size = 128).
+#
+# Layout identical to v1: grid = (ceil(N/8),), block = (512,) = 8 wavefronts,
+# 1 wavefront per N-row, fully coalesced loads across lanes in a wavefront.
+BGEMV_INT4_WAVE64_V2_HIP = """
+#include <hip/hip_runtime.h>
+#include <hip/hip_fp16.h>
+
+extern "C" __global__ void bgemv_int4_wave64_v2(
+    __half* __restrict__ out,
+    const unsigned char* __restrict__ weight,
+    const __half* __restrict__ scales,
+    const __half* __restrict__ zeros,
+    const __half* __restrict__ inp,
+    int M, int N, int K, int group_size)
+{
+    int tid    = threadIdx.x;
+    int wf_id  = tid >> 6;
+    int lane   = tid & 63;
+    int row    = blockIdx.x * 8 + wf_id;
+    if (row >= N) return;
+
+    int num_groups = (K + group_size - 1) / group_size;
+    int half_K     = K >> 1;
+    int num_u4     = half_K >> 4;   // K / 32 (each uint4 = 32 nibbles)
+
+    const uint4* wq4 = reinterpret_cast<const uint4*>(weight + (size_t)row * (size_t)half_K);
+
+    float acc[8];
+    #pragma unroll
+    for (int m = 0; m < 8; m++) acc[m] = 0.0f;
+
+    int prev_g = -1;
+    float s_val = 0.0f;
+    float z_val = 0.0f;
+    int scale_row_off = row * num_groups;
+
+    for (int i = lane; i < num_u4; i += 64) {
+        uint4 packed = wq4[i];
+
+        int nibbles[32];
+        #pragma unroll
+        for (int j = 0; j < 8; j++) {
+            nibbles[j     ] = (int)((packed.x >> (4*j)) & 0xF);
+            nibbles[j +  8] = (int)((packed.y >> (4*j)) & 0xF);
+            nibbles[j + 16] = (int)((packed.z >> (4*j)) & 0xF);
+            nibbles[j + 24] = (int)((packed.w >> (4*j)) & 0xF);
+        }
+
+        int k_base = i * 32;
+        int g = k_base / group_size;
+        if (g != prev_g) {
+            s_val = __half2float(scales[scale_row_off + g]);
+            z_val = __half2float(zeros [scale_row_off + g]);
+            prev_g = g;
+        }
+
+        float w_dq[32];
+        #pragma unroll
+        for (int j = 0; j < 32; j++) {
+            w_dq[j] = (float)nibbles[j] * s_val + z_val;
+        }
+
+        #pragma unroll
+        for (int m = 0; m < 8; m++) {
+            if (m < M) {
+                int inp_row_off = m * K + k_base;
+                #pragma unroll
+                for (int j = 0; j < 32; j++) {
+                    acc[m] += w_dq[j] * __half2float(inp[inp_row_off + j]);
+                }
+            }
+        }
+    }
+
+    #pragma unroll
+    for (int m = 0; m < 8; m++) {
+        if (m < M) {
+            float v = acc[m];
+            v += __shfl_xor(v, 32);
+            v += __shfl_xor(v, 16);
+            v += __shfl_xor(v,  8);
+            v += __shfl_xor(v,  4);
+            v += __shfl_xor(v,  2);
+            v += __shfl_xor(v,  1);
+            if (lane == 0) {
+                if (v >  65504.0f) v =  65504.0f;
+                if (v < -65504.0f) v = -65504.0f;
+                out[m * N + row] = __float2half(v);
+            }
+        }
+    }
+}
+"""
+
 
 # ============================================================================
 # CUDA C Kernel Sources
@@ -527,6 +656,189 @@ extern "C" __global__ void paged_attention(
             }
         }
         out_ptr[d] = __float2half(acc);
+    }
+}
+"""
+
+# ============================================================================
+# Paged Attention v2 — ROCm-only, GQA-aware + online softmax (FA-1 style)
+# ============================================================================
+# Grid:  (num_seqs, num_kv_heads)         — 5× fewer blocks than v1, 5× less KV HBM traffic
+# Block: (head_dim,)  e.g. 128             — one thread per output dim, full wavefront util
+# Each block loads K/V for ONE kv_head ONCE and computes the full attention output
+# for all `qpkv = num_heads / num_kv_heads` query heads that share it.
+# Online softmax means K and V are each read exactly ONCE (no scores[seq_len] scratch).
+#
+# Shared memory layout (bytes):
+#   k_tile  : block_size * head_dim * 2
+#   v_tile  : block_size * head_dim * 2
+#   xreduce : num_warps  * block_size * 4   (cross-warp dot-product reduction)
+# Total at Qwen2.5-32B (block_size=8, head_dim=128, num_warps=2): 4096 + 4096 + 64 = 8256 B
+PAGED_ATTENTION_V2_HIP = r"""
+#include <hip/hip_runtime.h>
+#include <hip/hip_fp16.h>
+
+#define QPKV_MAX 16
+#define BLOCK_SIZE_MAX 32
+
+extern "C" __global__ void paged_attention_v2(
+    half* __restrict__ out,             // [num_seqs, num_heads, head_dim]
+    const half* __restrict__ q,         // [num_seqs, num_heads, head_dim]
+    const half* __restrict__ kv_cache,
+    const int* __restrict__ block_table, // [num_seqs, max_blocks_per_seq]
+    const int* __restrict__ seq_lens,    // [num_seqs]
+    int num_heads,
+    int num_kv_heads,
+    int head_dim,
+    int block_size,
+    int max_blocks_per_seq,
+    int num_layers,
+    int layer_idx,
+    float scale
+) {
+    int seq_idx = blockIdx.x;
+    int kv_head_idx = blockIdx.y;
+    int tid = threadIdx.x;          // 0 .. head_dim-1
+    int qpkv = num_heads / num_kv_heads;
+
+    int seq_len = seq_lens[seq_idx];
+    if (seq_len == 0) {
+        // Zero-fill output so downstream kernels see deterministic memory.
+        for (int h = 0; h < qpkv; h++) {
+            int head_idx = kv_head_idx * qpkv + h;
+            out[seq_idx * num_heads * head_dim + head_idx * head_dim + tid] = __float2half(0.0f);
+        }
+        return;
+    }
+
+    // KV cache strides (matches v1 layout)
+    int kv_head_stride = block_size * head_dim;
+    int kv_type_stride = num_kv_heads * kv_head_stride;
+    int layer_stride   = 2 * kv_type_stride;
+    int block_bytes_in_halfs = num_layers * layer_stride;
+
+    // Load Q for all qpkv heads that share this kv_head — one dim per thread, into registers
+    float q_reg[QPKV_MAX];
+    #pragma unroll
+    for (int h = 0; h < QPKV_MAX; h++) q_reg[h] = 0.0f;
+    for (int h = 0; h < qpkv; h++) {
+        int head_idx = kv_head_idx * qpkv + h;
+        q_reg[h] = __half2float(q[seq_idx * num_heads * head_dim + head_idx * head_dim + tid]);
+    }
+
+    // Per-thread online-softmax state: this thread's dim of acc, per query head
+    float acc[QPKV_MAX];
+    float m_state[QPKV_MAX];
+    float s_state[QPKV_MAX];
+    #pragma unroll
+    for (int h = 0; h < QPKV_MAX; h++) {
+        acc[h]     = 0.0f;
+        m_state[h] = -1e30f;
+        s_state[h] = 0.0f;
+    }
+
+    // Shared memory: k_tile | v_tile | xreduce
+    extern __shared__ char smem_raw[];
+    half*  k_tile   = reinterpret_cast<half*>(smem_raw);
+    half*  v_tile   = k_tile + block_size * head_dim;
+    float* xreduce = reinterpret_cast<float*>(v_tile + block_size * head_dim);
+
+    int warp_id   = tid / warpSize;
+    int lane_id   = tid % warpSize;
+    int num_warps = (blockDim.x + warpSize - 1) / warpSize;
+
+    int num_blocks_seq = (seq_len + block_size - 1) / block_size;
+    for (int b = 0; b < num_blocks_seq; b++) {
+        int block_id = block_table[seq_idx * max_blocks_per_seq + b];
+        if (block_id < 0) continue;
+
+        int tokens_in_block = block_size;
+        int tail = seq_len - b * block_size;
+        if (tail < tokens_in_block) tokens_in_block = tail;
+
+        // Cooperative load of K and V tiles into shared memory (coalesced)
+        const half* k_base = kv_cache + block_id * block_bytes_in_halfs
+                             + layer_idx * layer_stride
+                             + kv_head_idx * kv_head_stride;
+        const half* v_base = k_base + kv_type_stride;
+
+        int load_total = block_size * head_dim;
+        for (int i = tid; i < load_total; i += blockDim.x) {
+            k_tile[i] = k_base[i];
+            v_tile[i] = v_base[i];
+        }
+        __syncthreads();
+
+        // For each query head sharing this kv_head:
+        for (int h = 0; h < qpkv; h++) {
+            // ---- QK^T: produce scores_local[t] for t in [0, tokens_in_block) ----
+            // Each thread tid contributes q_reg[h] * k_tile[t][tid] to dot product.
+            // Reduce across head_dim threads: wavefront-internal shfl, then cross-warp via xreduce.
+            float scores_local[BLOCK_SIZE_MAX];
+            #pragma unroll
+            for (int t = 0; t < BLOCK_SIZE_MAX; t++) scores_local[t] = 0.0f;
+
+            for (int t = 0; t < tokens_in_block; t++) {
+                float partial = q_reg[h] * __half2float(k_tile[t * head_dim + tid]);
+                // Wavefront reduce (works for wavefront=64 on AMD, warp=32 on NVIDIA)
+                for (int off = warpSize / 2; off > 0; off >>= 1) {
+                    partial += __shfl_xor(partial, off);
+                }
+                if (lane_id == 0) {
+                    xreduce[warp_id * block_size + t] = partial;
+                }
+            }
+            __syncthreads();
+
+            // Cross-warp reduce in warp 0 — produces final scaled dot per token
+            if (warp_id == 0 && lane_id < tokens_in_block) {
+                float s = 0.0f;
+                for (int w = 0; w < num_warps; w++) {
+                    s += xreduce[w * block_size + lane_id];
+                }
+                xreduce[lane_id] = s * scale;
+            }
+            __syncthreads();
+
+            // All threads read final scores
+            for (int t = 0; t < tokens_in_block; t++) {
+                scores_local[t] = xreduce[t];
+            }
+
+            // ---- Online softmax update ----
+            float m_tile = scores_local[0];
+            for (int t = 1; t < tokens_in_block; t++) {
+                m_tile = fmaxf(m_tile, scores_local[t]);
+            }
+            float m_new = fmaxf(m_state[h], m_tile);
+            float alpha = expf(m_state[h] - m_new);
+
+            float p_t[BLOCK_SIZE_MAX];
+            #pragma unroll
+            for (int t = 0; t < BLOCK_SIZE_MAX; t++) p_t[t] = 0.0f;
+            float sum_tile = 0.0f;
+            for (int t = 0; t < tokens_in_block; t++) {
+                p_t[t]    = expf(scores_local[t] - m_new);
+                sum_tile += p_t[t];
+            }
+
+            // ---- Update accumulator (this thread's dim) ----
+            float new_acc = acc[h] * alpha;
+            for (int t = 0; t < tokens_in_block; t++) {
+                new_acc += p_t[t] * __half2float(v_tile[t * head_dim + tid]);
+            }
+            acc[h]     = new_acc;
+            s_state[h] = s_state[h] * alpha + sum_tile;
+            m_state[h] = m_new;
+            __syncthreads();  // safe to overwrite xreduce on next h/b iteration
+        }
+    }
+
+    // Final normalize + writeback
+    for (int h = 0; h < qpkv; h++) {
+        int head_idx = kv_head_idx * qpkv + h;
+        float result = (s_state[h] > 0.0f) ? (acc[h] / s_state[h]) : 0.0f;
+        out[seq_idx * num_heads * head_dim + head_idx * head_dim + tid] = __float2half(result);
     }
 }
 """
@@ -2011,6 +2323,27 @@ class InferenceKernels:
         self._compiled: Dict[str, CompiledKernel] = {}
         self._fast_refs = []  # Keep ctypes refs alive for fast_launch
 
+        # Per-instance kernel source map: starts from class-level CUDA sources,
+        # then overlays backend-specific kernels (e.g. ROCm-only MFMA paths).
+        self._kernel_sources: Dict[str, str] = dict(self.KERNEL_SOURCES)
+        if backend == "rocm" and MFMA_DEQUANT_MATMUL_INT4_V3_HIP is not None:
+            # Lazy-compiled (not in essential set) — first launch in model_runner triggers compile.
+            self._kernel_sources["mfma_dequant_matmul_int4_v3"] = MFMA_DEQUANT_MATMUL_INT4_V3_HIP
+        if backend == "rocm" and BGEMV_INT4_WAVE64_HIP is not None:
+            # Native wavefront-64 batched INT4 GEMV — 2.13x over bgemv on MI300X at M=4.
+            self._kernel_sources["bgemv_int4_wave64"] = BGEMV_INT4_WAVE64_HIP
+        if backend == "rocm":
+            # 128-bit (uint4) weight-load variant — targets HBM bandwidth ceiling.
+            # Requires K%32==0 AND group_size%32==0.
+            self._kernel_sources["bgemv_int4_wave64_v2"] = BGEMV_INT4_WAVE64_V2_HIP
+        if backend == "rocm" and FUSED_ROPE_KV_WRITE_HIP is not None:
+            # Fused RoPE + KV cache write — collapses 2 launches per layer to 1.
+            self._kernel_sources["fused_rope_kv_write"] = FUSED_ROPE_KV_WRITE_HIP
+        if backend == "rocm":
+            # GQA-aware + online-softmax paged attention (Fix #1 + #2).
+            # 5× less KV HBM traffic vs v1 on Qwen2.5-32B (qpkv=5).
+            self._kernel_sources["paged_attention_v2"] = PAGED_ATTENTION_V2_HIP
+
     def compile_all(self, quant_type: str = "int4"):
         """Compile essential inference kernels for fast cold start.
 
@@ -2052,6 +2385,35 @@ class InferenceKernels:
             essential |= {"fp16_matmul", "tiled_fp16_matmul", "fp16_gemv"}
         return [(n, s) for n, s in self.KERNEL_SOURCES.items() if n in essential]
 
+    def _detect_arch_string(self) -> str:
+        """Detect the current CUDA device's compute capability and return NVRTC arch string.
+
+        Falls back to compute_80 if detection fails (matches the historical default).
+        Cached on the instance to avoid repeated driver calls.
+        """
+        cached = getattr(self, "_cached_arch_string", None)
+        if cached is not None:
+            return cached
+        try:
+            import ctypes
+            driver = self._compiler._load_cuda_driver()
+            if driver is None:
+                self._cached_arch_string = "compute_80"
+                return self._cached_arch_string
+            # Get current device from active context (engine has already initialized it).
+            device = ctypes.c_int(0)
+            rc = driver.cuCtxGetDevice(ctypes.byref(device))
+            if rc != 0:
+                # Fall back to device 0.
+                device = ctypes.c_int(0)
+                driver.cuDeviceGet(ctypes.byref(device), 0)
+            from zse_compiler.runtime.compiler import RuntimeCompiler
+            arch = RuntimeCompiler._detect_cuda_arch(driver, device)
+        except Exception:
+            arch = "compute_80"
+        self._cached_arch_string = arch
+        return arch
+
     def _compile_ptx_only(self, quant_type: str = "int4"):
         """Compile kernel sources to PTX in parallel (CPU-only, no GPU context needed).
 
@@ -2061,6 +2423,8 @@ class InferenceKernels:
         import ctypes
 
         items = self._get_essential_items(quant_type)
+        arch = self._detect_arch_string()
+        arch_opt = f"--gpu-architecture={arch}".encode()
 
         def _compile_to_ptx(name_source):
             name, source = name_source
@@ -2076,7 +2440,7 @@ class InferenceKernels:
             )
             if status != 0:
                 raise RuntimeError(f"nvrtcCreateProgram failed: {status}")
-            options = [b"--gpu-architecture=compute_80", b"-default-device"]
+            options = [arch_opt, b"-default-device"]
             for inc_path in compiler._find_cuda_include_paths():
                 options.append(f"--include-path={inc_path}".encode())
             opts_array = (ctypes.c_char_p * len(options))(*options)
@@ -2146,6 +2510,9 @@ class InferenceKernels:
         if driver is None:
             raise RuntimeError("CUDA driver not available for parallel compilation")
 
+        arch = self._detect_arch_string()
+        arch_opt = f"--gpu-architecture={arch}".encode()
+
         # Step 1: Compile source → PTX in parallel (context-independent)
         def _compile_to_ptx(name_source):
             name, source = name_source
@@ -2161,7 +2528,7 @@ class InferenceKernels:
             )
             if status != 0:
                 raise RuntimeError(f"nvrtcCreateProgram failed: {status}")
-            options = [b"--gpu-architecture=compute_80", b"-default-device"]
+            options = [arch_opt, b"-default-device"]
             for inc_path in compiler._find_cuda_include_paths():
                 options.append(f"--include-path={inc_path}".encode())
             opts_array = (ctypes.c_char_p * len(options))(*options)
@@ -2301,10 +2668,12 @@ class InferenceKernels:
 
     def compile_kernel(self, name: str):
         """Compile a single kernel by name."""
-        if name not in self.KERNEL_SOURCES:
+        if name not in self._kernel_sources:
             raise ValueError(f"Unknown kernel: {name}")
-        source = self.KERNEL_SOURCES[name]
-        if self._backend == "rocm":
+        source = self._kernel_sources[name]
+        # Skip CUDA->HIP transform if source already targets HIP natively
+        # (e.g. portable @zse.kernel sources generated with backend='rocm').
+        if self._backend == "rocm" and "hip/hip_runtime.h" not in source:
             source = self._cuda_to_hip(source)
         self._compiled[name] = self._compiler.compile(
             source, name, self._backend

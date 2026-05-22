@@ -80,10 +80,16 @@ class RuntimeCompiler:
         # Use existing context if available, otherwise create one
         ctx = ctypes.c_void_p()
         driver.cuCtxGetCurrent(ctypes.byref(ctx))
+        device = ctypes.c_int(0)
         if ctx.value is None or ctx.value == 0:
-            device = ctypes.c_int(0)
             driver.cuDeviceGet(ctypes.byref(device), 0)
             driver.cuCtxCreate_v2(ctypes.byref(ctx), 0, device)
+        else:
+            # Get device backing the current context
+            driver.cuCtxGetDevice(ctypes.byref(device))
+
+        # Query compute capability of the current device so we don't hardcode SM 80
+        arch_str = self._detect_cuda_arch(driver, device)
 
         # Create NVRTC program
         source_bytes = source.encode("utf-8")
@@ -97,8 +103,8 @@ class RuntimeCompiler:
         if status != 0:
             raise RuntimeError(f"nvrtcCreateProgram failed with status {status}")
 
-        # Compile
-        options = [b"--gpu-architecture=compute_80", b"-default-device"]  # SM 80 for A100
+        # Compile — arch matches the actual device (T4=sm_75, V100=sm_70, A100=sm_80, H100=sm_90, etc.)
+        options = [f"--gpu-architecture={arch_str}".encode(), b"-default-device"]
         # Add CUDA include paths for cuda_fp16.h etc.
         for inc_path in self._find_cuda_include_paths():
             options.append(f"--include-path={inc_path}".encode())
@@ -209,46 +215,58 @@ class RuntimeCompiler:
     # --- Metal Compilation ---
 
     def _compile_metal(self, source: str, kernel_name: str) -> CompiledKernel:
-        """Compile Metal source — uses subprocess to call xcrun metal compiler."""
-        import subprocess
+        """Compile Metal source at runtime using Metal's GPU driver compiler.
 
-        # Write source to temp file
-        with tempfile.NamedTemporaryFile(suffix=".metal", mode="w", delete=False) as f:
-            f.write(source)
-            src_path = f.name
+        Uses the C bridge (metal_dispatch.m) which calls newLibraryWithSource:
+        — compiles MSL on-device, needs only Command Line Tools (no Xcode).
+        """
+        from .metal_dispatch import get_metal_runtime
 
-        lib_path = src_path.replace(".metal", ".metallib")
+        rt = get_metal_runtime()
+        pipeline = rt.compile_msl(source, kernel_name)
 
-        try:
-            # Compile .metal → .air → .metallib
-            air_path = src_path.replace(".metal", ".air")
-            subprocess.run(
-                ["xcrun", "-sdk", "macosx", "metal", "-c", src_path, "-o", air_path],
-                check=True, capture_output=True, text=True
-            )
-            subprocess.run(
-                ["xcrun", "-sdk", "macosx", "metallib", air_path, "-o", lib_path],
-                check=True, capture_output=True, text=True
-            )
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Metal compilation failed:\n{e.stderr}")
-        except FileNotFoundError:
-            raise RuntimeError("xcrun not found. Are you on macOS with Xcode installed?")
-        finally:
-            os.unlink(src_path)
-            if os.path.exists(src_path.replace(".metal", ".air")):
-                os.unlink(src_path.replace(".metal", ".air"))
-
-        # Return compiled kernel — Metal library loading happens via Metal API at launch time
         return CompiledKernel(
             name=kernel_name,
             backend="metal",
-            module=ctypes.c_void_p(0),  # Will be loaded by launcher
-            function=ctypes.c_void_p(0),
+            module=pipeline,       # MTLComputePipelineState ptr
+            function=pipeline,     # Same ptr — pipeline IS the callable
             source=source,
+            _driver=rt,            # Keep runtime alive
         )
 
     # --- Library Loading ---
+
+    # Cache: device ordinal → "compute_XY" string
+    _arch_cache: Dict[int, str] = {}
+
+    @classmethod
+    def _detect_cuda_arch(cls, driver, device) -> str:
+        """Query compute capability of a CUDA device and return the NVRTC arch string.
+
+        Falls back to compute_80 if the query fails (matches old hardcoded behavior).
+        """
+        try:
+            ordinal = device.value if hasattr(device, "value") else int(device)
+        except Exception:
+            ordinal = 0
+        if ordinal in cls._arch_cache:
+            return cls._arch_cache[ordinal]
+
+        try:
+            major = ctypes.c_int(0)
+            minor = ctypes.c_int(0)
+            # 75 = CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR
+            # 76 = CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR
+            rc1 = driver.cuDeviceGetAttribute(ctypes.byref(major), 75, device)
+            rc2 = driver.cuDeviceGetAttribute(ctypes.byref(minor), 76, device)
+            if rc1 == 0 and rc2 == 0 and major.value > 0:
+                arch = f"compute_{major.value}{minor.value}"
+            else:
+                arch = "compute_80"
+        except Exception:
+            arch = "compute_80"
+        cls._arch_cache[ordinal] = arch
+        return arch
 
     @staticmethod
     def _find_cuda_include_paths():
@@ -346,3 +364,4 @@ class RuntimeCompiler:
             except OSError:
                 continue
         return None
+

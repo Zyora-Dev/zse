@@ -48,17 +48,32 @@ class FusionPass:
     4. Emit single fused kernel
     """
 
-    def fuse(self, kernel_funcs: list, name: Optional[str] = None) -> IRFunction:
+    def fuse(self, kernel_funcs: list, name: Optional[str] = None,
+             chain: Optional[List[str]] = None) -> IRFunction:
         """Fuse a list of KernelFunction objects into a single IR function.
 
         Requirements:
         - Each kernel must be element-wise (indexed by global_id)
         - Output of kernel N must be input of kernel N+1
+
+        Args:
+            kernel_funcs: kernels to fuse in order.
+            name: optional name for the fused kernel.
+            chain: optional list of length len(kernel_funcs)-1 giving the
+                tensor-param NAME in kernel_funcs[i+1] that receives the
+                output of kernel_funcs[i]. Use this when a kernel has
+                multiple input tensors (e.g. residual_add(x, res, out))
+                — otherwise the fuser will raise rather than guess.
         """
         if len(kernel_funcs) < 2:
             raise ValueError("Need at least 2 kernels to fuse")
 
         irs = [kf.ir for kf in kernel_funcs]
+        if chain is not None and len(chain) != len(kernel_funcs) - 1:
+            raise ValueError(
+                f"chain must have length {len(kernel_funcs) - 1} "
+                f"(one entry per junction), got {len(chain)}"
+            )
 
         # Start with first kernel's params and body
         fused_params = list(irs[0].params)
@@ -86,7 +101,8 @@ class FusionPass:
                         fused_body.append(stmt)
             else:
                 # Subsequent kernels: inline body, replace input loads with prev output
-                input_tensor = self._find_input_tensor(ir, prev_output_var, irs[i-1])
+                hint = chain[i - 1] if chain is not None else None
+                input_tensor = self._find_input_tensor(ir, prev_output_var, irs[i-1], hint=hint, kernel_name=kernel_funcs[i].name)
 
                 for stmt in ir.body:
                     if isinstance(stmt, IRAssign):
@@ -148,25 +164,62 @@ class FusionPass:
             return node.name
         return ""
 
-    def _find_input_tensor(self, ir: IRFunction, prev_output: str, prev_ir: IRFunction) -> str:
-        """Find which parameter of this kernel corresponds to the previous kernel's output."""
-        # Heuristic: the first tensor param that isn't also an output
-        output_params = set()
-        for stmt in ir.body:
-            if isinstance(stmt, IRStore):
-                name = self._get_tensor_name(stmt.tensor)
+    def _find_input_tensor(self, ir: IRFunction, prev_output: str, prev_ir: IRFunction,
+                           hint: Optional[str] = None, kernel_name: str = "") -> str:
+        """Find which parameter of this kernel receives the previous kernel's output.
+
+        Resolution order:
+          1. Explicit chain hint from the user (always wins).
+          2. If exactly one tensor param is read-only (never appears as an IRStore
+             target), that is unambiguously the input.
+          3. Otherwise → raise: the user must disambiguate via chain=[...].
+        """
+        tensor_params = [p for p in ir.params if p.dtype in ("tensor", "Tensor",
+                         "half_tensor", "fp16_tensor", "uint8_tensor", "int8_tensor",
+                         "int32_tensor")]
+        param_names = {p.name for p in tensor_params}
+
+        # 1. Honor explicit hint
+        if hint is not None:
+            if hint not in param_names:
+                raise ValueError(
+                    f"chain entry '{hint}' is not a tensor parameter of kernel "
+                    f"'{kernel_name}' (have: {sorted(param_names)})"
+                )
+            return hint
+
+        # 2. Collect write-target tensors
+        written = set()
+        self._collect_store_targets(ir.body, written)
+        read_only = [p.name for p in tensor_params if p.name not in written]
+
+        if len(read_only) == 1:
+            return read_only[0]
+        if len(read_only) == 0:
+            # No read-only tensor — caller must specify
+            raise ValueError(
+                f"Cannot fuse into kernel '{kernel_name}': no read-only tensor "
+                f"parameter found. Pass chain=[...] to disambiguate."
+            )
+        # Multi-input kernel (e.g. residual_add(x, res, out)): refuse to guess.
+        raise ValueError(
+            f"Cannot fuse into kernel '{kernel_name}': it has multiple input "
+            f"tensors {sorted(read_only)}. Pass chain=['<param_name>', ...] "
+            f"to specify which one receives the previous kernel's output."
+        )
+
+    def _collect_store_targets(self, stmts, out: set) -> None:
+        """Recursively gather tensor names that appear as IRStore.tensor anywhere."""
+        for s in stmts:
+            if isinstance(s, IRStore):
+                name = self._get_tensor_name(s.tensor)
                 if name:
-                    output_params.add(name)
-
-        for p in ir.params:
-            if p.dtype in ("tensor", "Tensor") and p.name not in output_params:
-                return p.name
-
-        # Fallback: first tensor param
-        for p in ir.params:
-            if p.dtype in ("tensor", "Tensor"):
-                return p.name
-        return ""
+                    out.add(name)
+            # Recurse into nested bodies (if/for/while)
+            for attr in ("body", "then_body", "else_body"):
+                sub = getattr(s, attr, None)
+                if isinstance(sub, list):
+                    self._collect_store_targets(sub, out)
 
     def _replace_loads(self, node: IRNode, tensor_name: str, replacement_var: str) -> IRNode:
         """Replace loads from tensor_name with a reference to replacement_var."""
