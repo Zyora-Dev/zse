@@ -17,7 +17,7 @@ Usage:
     vector_add.launch(grid=(n // 256,), block=(256,), args=(a, b, out))
 """
 
-__version__ = "0.1.0"
+__version__ = "2.0.1"
 
 # Types
 from zse_compiler.types.dtypes import (

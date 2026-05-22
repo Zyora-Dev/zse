@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zse-compiler"
-version = "2.0.0"
+version = "2.0.1"
 description = "Pure-Python GPU kernel compiler. Write kernels in Python, target CUDA, ROCm (HIP), and Metal. Zero dependencies."
-readme = "../README.md"
+readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "Apache-2.0"}
 authors = [

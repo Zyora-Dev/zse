@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zse-engine"
-version = "2.0.0"
+version = "2.0.1"
 description = "Zero-dependency LLM inference engine. Fastest cold start, smallest VRAM footprint. CUDA + ROCm + Metal."
-readme = "../README.md"
+readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "Apache-2.0"}
 authors = [
@@ -44,7 +44,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Environment :: GPU :: NVIDIA CUDA",
 ]
-dependencies = ["zse-compiler==2.0.0"]
+dependencies = ["zse-compiler>=2.0.1"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]

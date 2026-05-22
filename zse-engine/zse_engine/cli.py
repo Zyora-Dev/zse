@@ -108,9 +108,23 @@ def _cmd_info(args):
 
 def _cmd_version(args):
     """Show version information."""
+    try:
+        from importlib.metadata import version as _pkg_version, PackageNotFoundError
+    except Exception:  # pragma: no cover
+        _pkg_version = None
+        PackageNotFoundError = Exception
+
+    def _v(pkg, fallback):
+        if _pkg_version is None:
+            return fallback
+        try:
+            return _pkg_version(pkg)
+        except PackageNotFoundError:
+            return fallback
+
     print("ZSE — Zero-dependency Server Engine")
-    print(f"  zse-engine:   0.1.0")
-    print(f"  zse-compiler: 0.1.0")
+    print(f"  zse-engine:   {_v('zse-engine', '2.0.0')}")
+    print(f"  zse-compiler: {_v('zse-compiler', '2.0.0')}")
     print(f"  Python:       {sys.version.split()[0]}")
     print(f"  Platform:     {sys.platform}")
 
