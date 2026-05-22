@@ -271,7 +271,7 @@ Apache 2.0 — see [LICENSE](LICENSE).
 
 <p>This project is supported by:</p>
 <p>
-  <a href="https://www.digitalocean.com/">
+  <a href="https://m.do.co/c/0c4e7c5fbe61">
     <img src="https://opensource.nyc3.cdn.digitaloceanspaces.com/attribution/assets/SVG/DO_Logo_horizontal_blue.svg" width="201px">
   </a>
 </p>
