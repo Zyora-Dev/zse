@@ -269,6 +269,13 @@ Apache 2.0 — see [LICENSE](LICENSE).
 
 ## Acknowledgments
 
+<p>This project is supported by:</p>
+<p>
+  <a href="https://www.digitalocean.com/">
+    <img src="https://opensource.nyc3.cdn.digitaloceanspaces.com/attribution/assets/SVG/DO_Logo_horizontal_blue.svg" width="201px">
+  </a>
+</p>
+
 ZSE's AMD MI300X validation, the 32B-parameter benchmarks, and a large share of our ROCm
 kernel development work was made possible by [**DigitalOcean's Open Source Sponsorship
 Program**](https://www.digitalocean.com/open-source/credits-for-projects), which provides
