@@ -46,6 +46,26 @@ class ModelConfig:
     rope_scaling: Optional[Dict] = None  # For extended context
     sliding_window: Optional[int] = None  # Mistral
     tie_word_embeddings: bool = False
+    # --- Gemma-family extensions (optional; None/empty = not applicable) ---
+    # Per-layer attention type pattern, e.g. ["sliding","sliding",...,"full",...].
+    # When set, layers may have different head_dim / kv_heads / rope theta.
+    layer_types: Optional[list] = None
+    # Full-attention (global) layer overrides — Gemma 4 uses larger head_dim and
+    # fewer KV heads on its 1-in-6 "full_attention" layers.
+    global_head_dim: Optional[int] = None
+    global_num_kv_heads: Optional[int] = None
+    global_rope_theta: Optional[float] = None
+    # Partial rotary factor for full-attention layers (Gemma 4 = 0.25).
+    partial_rotary_factor: Optional[float] = None
+    # GeGLU / softcap / embed-scaling knobs (Gemma family).
+    hidden_activation: Optional[str] = None     # "gelu_pytorch_tanh" => GeGLU
+    final_logit_softcapping: Optional[float] = None
+    attn_logit_softcapping: Optional[float] = None
+    query_pre_attn_scalar: Optional[float] = None
+    attention_k_eq_v: bool = False              # K and V projections shared
+    embed_scale: bool = False                   # multiply embeddings by sqrt(hidden)
+    # Multimodal (Gemma 4 unified, encoder-free). None = text-only.
+    multimodal: Optional[Dict] = None           # {"vision": {...}, "audio": {...}}
     quant: QuantConfig = field(default_factory=QuantConfig)
 
     def to_dict(self) -> dict:

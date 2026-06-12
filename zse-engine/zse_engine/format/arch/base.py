@@ -105,6 +105,8 @@ def detect_architecture(hf_config: dict) -> str:
             return "qwen2"
         if "phi" in arch_lower:
             return "phi3"
+        if "gemma4" in arch_lower or "gemma_4" in arch_lower:
+            return "gemma4"
         if "gemma2" in arch_lower:
             return "gemma2"
         if "gemma" in arch_lower:
