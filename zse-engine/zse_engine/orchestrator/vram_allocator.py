@@ -204,24 +204,61 @@ class VRAMAllocator:
         d = config.head_dim
         S = max_seq_len
 
+        # Gemma 4 (and any arch with num_heads*head_dim > hidden, or per-layer
+        # head_dim) needs the attention-output buffers sized to the MAX
+        # num_heads*head_dim across layer types — not hidden_size.
+        attn_w, qkv_w, kv_w = self._attn_widths(config)
+
         # All in fp16 (2 bytes)
         total = 0
         total += S * h * 2         # hidden
         total += S * h * 2         # residual
-        total += S * (n_heads + 2 * n_kv) * d * 2  # qkv
-        total += S * h * 2         # attn_out
+        total += S * qkv_w * 2     # qkv (holds Q: num_heads * max_head_dim)
+        total += S * attn_w * 2    # attn_out (holds K then attention output)
         total += S * inter * 2     # mlp_gate
         total += S * inter * 2     # mlp_up
-        total += S * h * 2         # mlp_out
+        total += S * max(h, kv_w) * 2  # mlp_out (holds V)
         # Logits: during decode we only sample 1 row per sequence.
         # During prefill we only need the LAST token's logits.
         # Size for max_batch_seqs rows, not full seq_len.
         logits_rows = min(S, 64)   # 64 = typical max_batch_seqs
         total += logits_rows * vocab * 2  # logits
-        total += S * h * 2         # norm_out
+        total += S * attn_w * 2    # norm_out (reused as attention scratch)
         total += S * h * 4         # hidden_f32
         total += S * h * 4         # residual_f32
         return total
+
+    @staticmethod
+    def _attn_widths(config):
+        """Return (attn_out_width, qkv_width, kv_width) in elements per row.
+
+        For uniform-head_dim archs (Llama/Qwen/Gemma2) this collapses to the
+        usual sizes. For Gemma 4 the attention buffers must hold the LARGER of
+        the per-layer-type num_heads*head_dim (sliding 256 vs full global 512),
+        and the residual-stream-derived hidden_size, whichever is bigger.
+        """
+        h = config.hidden_size
+        n_heads = config.num_heads
+        n_kv = config.num_kv_heads
+        d = config.head_dim
+        # Max head_dim across layer types (Gemma 4 full layers use global_head_dim).
+        max_d = max(d, getattr(config, "global_head_dim", None) or 0)
+        # Max KV heads across layer types (sliding uses num_kv_heads; full may use
+        # num_global_key_value_heads — but KV width = kv_heads*head_dim, and the
+        # sliding case (8*256=2048) typically dominates the full case (1*512=512)).
+        max_kv = max(
+            n_kv * d,
+            (getattr(config, "global_num_kv_heads", None) or n_kv)
+            * (getattr(config, "global_head_dim", None) or d),
+        )
+        attn_out_w = max(h, n_heads * max_d)
+        # qkv buffer: never shrink below the original (n_heads + 2*n_kv)*d size —
+        # the C fast-dispatch path may write Q/K/V at offsets into it. Widen only
+        # if Gemma 4's num_heads*max_head_dim needs more.
+        orig_qkv = (n_heads + 2 * n_kv) * d
+        qkv_w = max(orig_qkv, n_heads * max_d)
+        return attn_out_w, qkv_w, max_kv
+
 
     def allocate_scratch(self, config, max_seq_len: int = 2048) -> ScratchBuffers:
         """Allocate all scratch buffers on GPU.
@@ -244,16 +281,20 @@ class VRAMAllocator:
 
         scratch = ScratchBuffers()
 
+        # Attention buffers may need to be wider than hidden_size (Gemma 4:
+        # num_heads*head_dim up to 8192 vs hidden 3840). Uniform archs unchanged.
+        attn_w, qkv_w, kv_w = self._attn_widths(config)
+
         if self._gpu_mem is not None:
             scratch.hidden = self._gpu_mem.allocate((S, h), float16)
             scratch.residual = self._gpu_mem.allocate((S, h), float16)
-            scratch.qkv = self._gpu_mem.allocate((S, (n_heads + 2 * n_kv) * d), float16)
-            scratch.attn_out = self._gpu_mem.allocate((S, h), float16)
+            scratch.qkv = self._gpu_mem.allocate((S, qkv_w), float16)
+            scratch.attn_out = self._gpu_mem.allocate((S, attn_w), float16)
             scratch.mlp_gate = self._gpu_mem.allocate((S, inter), float16)
             scratch.mlp_up = self._gpu_mem.allocate((S, inter), float16)
-            scratch.mlp_out = self._gpu_mem.allocate((S, h), float16)
+            scratch.mlp_out = self._gpu_mem.allocate((S, max(h, kv_w)), float16)
             scratch.logits = self._gpu_mem.allocate((logits_rows, vocab), float16)
-            scratch.norm_out = self._gpu_mem.allocate((S, h), float16)
+            scratch.norm_out = self._gpu_mem.allocate((S, attn_w), float16)
             # FP32 residual stream (prevents fp16 overflow across transformer layers)
             from zse_compiler.types.dtypes import float32
             scratch.hidden_f32 = self._gpu_mem.allocate((S, h), float32)
