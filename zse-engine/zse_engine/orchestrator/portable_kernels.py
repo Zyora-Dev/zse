@@ -606,6 +606,113 @@ def bgemv_int4_wave64(
 
 
 # ============================================================================
+# Small-M INT4 Dequant GEMV — native warp-32 layout (NVIDIA/CUDA-tuned)
+# ============================================================================
+# Portable @zse.kernel replacement for the hand-written `batched_dequant_gemv_int4`
+# C-string blob, for M=2..8 concurrent decode on NVIDIA.
+#
+# Why a portable warp-32 kernel:
+#   The existing C-string is already correct NVIDIA layout (32-lane warps). The
+#   value here is (1) keeping the IP-pure DSL story — no hand-written C blob on
+#   the NVIDIA decode hot path, and (2) a scaffold for layering tensor-core
+#   (WMMA) acceleration on top once the small-M probe proves it helps.
+#
+# Design (mirror of bgemv_int4_wave64 but for 32-lane warps):
+#   - 8 warps (32 lanes each) per block = 256 threads/block
+#   - 1 warp per output N-row, 8 N-rows per block
+#   - Each lane processes one u32 (8 packed INT4 nibbles) per iteration,
+#     striding K with stride 32 u32s = 256 K-elements per warp iter.
+#   - All lanes in a warp read the SAME row -> fully coalesced loads.
+#   - Dequant once per lane per iter, then 8 FMAs per M-row (M reuse).
+#   - Warp-32 reduce at end via warp_shuffle_xor(width=32).
+#
+# Numerically identical to bgemv_int4_wave64 (same dequant: nibble*scale + zero,
+# matches .zse format). Only the warp width and reduction tree differ.
+#
+# Constraints:
+#   - M <= 8 (uses fixed-size local_array[8])
+#   - K % 8 == 0 (u32-aligned weight loads)
+#   - group_size >= 8 (so 8-K window stays in one group per lane)
+
+@zse.kernel
+def bgemv_int4_wave32(
+    out: "half_tensor",          # [M, N]
+    weight: "uint8_tensor",      # [N, K/2] packed INT4 (low nibble first)
+    scales: "half_tensor",       # [N, num_groups]
+    zeros: "half_tensor",        # [N, num_groups]
+    inp: "half_tensor",          # [M, K]
+    M: int, N: int, K: int,
+    group_size: int,
+):
+    tid = zse.thread_id(0)
+    wf_id = tid / 32                 # 0..7
+    lane = tid % 32                  # 0..31
+    row = zse.block_id(0) * 8 + wf_id
+
+    if row < N:
+        num_groups = (K + group_size - 1) / group_size
+        half_K = K / 2
+        num_u32 = half_K / 4          # = K / 8
+
+        wq = zse.reinterpret(weight, zse.uint32)
+
+        nibbles = zse.local_array(8, zse.int32)
+        w_dq = zse.local_array(8, zse.float32)
+        acc = zse.local_array(8, zse.float32)
+
+        for m_init in range(8):
+            acc[m_init] = 0.0
+
+        # Per-lane scale/zero cache (group changes are rare since one lane's
+        # 8-K window fits inside one group when group_size >= 8).
+        prev_g: int = -1
+        s_val: float = 0.0
+        z_val: float = 0.0
+
+        scale_row_off = row * int(num_groups)
+        w_row_u32_base = row * int(num_u32)
+
+        # Each lane strides through num_u32 with stride 32.
+        for i in range(int(lane), int(num_u32), 32):
+            packed = wq[w_row_u32_base + i]
+            zse.unpack_uint4(packed, nibbles, 0)
+
+            k_base = i * 8
+            g = k_base / group_size
+            if g != prev_g:
+                s_val = zse.half_to_float(scales[scale_row_off + g])
+                z_val = zse.half_to_float(zeros[scale_row_off + g])
+                prev_g = g
+
+            # Dequant once per K-window
+            for j in range(8):
+                w_dq[j] = float(nibbles[j]) * s_val + z_val
+
+            # Accumulate against all M input rows
+            for m in range(8):
+                if m < M:
+                    inp_row_off = m * K + k_base
+                    for j2 in range(8):
+                        acc[m] = acc[m] + w_dq[j2] * zse.half_to_float(inp[inp_row_off + j2])
+
+        # ===== Warp-32 reduction (manual butterfly) =====
+        for m_red in range(8):
+            if m_red < M:
+                v = acc[m_red]
+                v = v + zse.warp_shuffle_xor(v, 16, 32)
+                v = v + zse.warp_shuffle_xor(v, 8, 32)
+                v = v + zse.warp_shuffle_xor(v, 4, 32)
+                v = v + zse.warp_shuffle_xor(v, 2, 32)
+                v = v + zse.warp_shuffle_xor(v, 1, 32)
+                if lane == 0:
+                    if v > 65504.0:
+                        v = 65504.0
+                    if v < -65504.0:
+                        v = -65504.0
+                    out[m_red * N + row] = zse.float_to_half(v)
+
+
+# ============================================================================
 # Fused RoPE + KV cache write — single kernel, no K-buffer round-trip
 # ============================================================================
 # Replaces:

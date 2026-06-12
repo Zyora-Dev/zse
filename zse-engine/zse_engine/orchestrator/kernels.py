@@ -33,6 +33,16 @@ try:
 except Exception:
     BGEMV_INT4_WAVE64_HIP = None
 
+# Portable @zse.kernel wave-32 batched INT4 GEMV (small-M decode, NVIDIA-tuned).
+# IP-pure DSL replacement for the hand-written batched_dequant_gemv_int4 C-string
+# on the NVIDIA concurrent-decode hot path. Numerically identical (same dequant:
+# nibble*scale + zero). Generated at import (pure Python AST->IR->CUDA C; no GPU).
+from zse_engine.orchestrator.portable_kernels import bgemv_int4_wave32 as _bgemv_wave32_kernel
+try:
+    BGEMV_INT4_WAVE32_CUDA = _bgemv_wave32_kernel.source("cuda")
+except Exception:
+    BGEMV_INT4_WAVE32_CUDA = None
+
 # Portable @zse.kernel fused RoPE + KV-cache-write (decode path).
 # Collapses batched_rotary_embedding + batched_kv_cache_write into one launch
 # and eliminates the K-buffer round-trip (rotated K goes straight to KV cache).
@@ -2343,6 +2353,11 @@ class InferenceKernels:
             # GQA-aware + online-softmax paged attention (Fix #1 + #2).
             # 5× less KV HBM traffic vs v1 on Qwen2.5-32B (qpkv=5).
             self._kernel_sources["paged_attention_v2"] = PAGED_ATTENTION_V2_HIP
+        if backend == "cuda" and BGEMV_INT4_WAVE32_CUDA is not None:
+            # Portable warp-32 batched INT4 GEMV — IP-pure replacement for the
+            # hand-written batched_dequant_gemv_int4 C-string on NVIDIA decode.
+            # Lazy-compiled (not in essential set); first launch triggers compile.
+            self._kernel_sources["bgemv_int4_wave32"] = BGEMV_INT4_WAVE32_CUDA
 
     def compile_all(self, quant_type: str = "int4"):
         """Compile essential inference kernels for fast cold start.

@@ -2028,15 +2028,33 @@ class ModelRunner:
                         stream=stream,
                     )
                 else:
-                    # Batched GEMV: reads weight ONCE, computes M dot products (NVIDIA path).
-                    self._kernels.launch(
-                        "batched_dequant_gemv_int4",
-                        ((N + 8 - 1) // 8,),  # BGEMV_RPB=8
-                        (gemv_block,),
-                        out, weight_t, scales_t, zeros_t, inp,
-                        M, N, K, weight.group_size,
-                        stream=stream,
-                    )
+                    # NVIDIA path. The hand-written C-string bgemv remains the
+                    # production default — the portable warp-32 GEMV is parity-
+                    # proven but bandwidth-bound (≈parity, slight regression on
+                    # wide-N shapes), so it is NOT activated here. Kept in the
+                    # kernel registry as an IP-pure scaffold for a future WMMA
+                    # (tensor-core) small-M variant. Flip `use_wave32_bgemv` to
+                    # True only once a faster portable kernel exists.
+                    use_wave32_bgemv = False
+                    if use_wave32_bgemv:
+                        self._kernels.launch(
+                            "bgemv_int4_wave32",
+                            ((N + 7) // 8,),  # 8 N-rows per block
+                            (256,),           # 8 warps × 32 lanes
+                            out, weight_t, scales_t, zeros_t, inp,
+                            M, N, K, weight.group_size,
+                            stream=stream,
+                        )
+                    else:
+                        # Batched GEMV: reads weight ONCE, computes M dot products.
+                        self._kernels.launch(
+                            "batched_dequant_gemv_int4",
+                            ((N + 8 - 1) // 8,),  # BGEMV_RPB=8
+                            (gemv_block,),
+                            out, weight_t, scales_t, zeros_t, inp,
+                            M, N, K, weight.group_size,
+                            stream=stream,
+                        )
             else:
                 # ROCm/CDNA: use MFMA-accelerated v3 kernel when shapes are compatible.
                 # Constraints: K%64==0 (CHUNK_K=64) and group_size%16==0 (lane-window assumption).
