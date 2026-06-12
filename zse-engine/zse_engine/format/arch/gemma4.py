@@ -173,14 +173,26 @@ class Gemma4Adapter(ArchAdapter):
 
     def expected_tensors(self, config: ModelConfig) -> List[str]:
         """Text-backbone tensor inventory. Modality tensors are validated
-        separately (their exact names come from the inventory script)."""
+        separately (their exact names come from the inventory script).
+
+        Layer-type aware: full-attention layers use attention_k_eq_v, so their
+        value projection is shared with the key (value = key) and NO v_proj
+        weight is stored. Verified against the real 677-tensor header:
+        40 sliding × 14 + 8 full × 13 (no v_proj) + embed + norm + 11 mm = 677.
+        """
+        layer_types = config.layer_types or []
+
+        def is_full(i: int) -> bool:
+            if config.attention_k_eq_v and i < len(layer_types):
+                return layer_types[i] == "full_attention"
+            return False
+
         tensors = ["embed_tokens.weight"]
         for i in range(config.num_layers):
             prefix = f"layers.{i}"
             tensors.extend([
                 f"{prefix}.self_attn.q_proj.weight",
                 f"{prefix}.self_attn.k_proj.weight",
-                f"{prefix}.self_attn.v_proj.weight",
                 f"{prefix}.self_attn.o_proj.weight",
                 f"{prefix}.self_attn.q_norm.weight",
                 f"{prefix}.self_attn.k_norm.weight",
@@ -193,6 +205,9 @@ class Gemma4Adapter(ArchAdapter):
                 f"{prefix}.post_feedforward_layernorm.weight",
                 f"{prefix}.layer_scalar",
             ])
+            # v_proj only on layers that DON'T share value with key.
+            if not is_full(i):
+                tensors.append(f"{prefix}.self_attn.v_proj.weight")
         tensors.append("norm.weight")
         if not config.tie_word_embeddings:
             tensors.append("lm_head.weight")
