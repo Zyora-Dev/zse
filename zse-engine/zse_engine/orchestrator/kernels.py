@@ -1466,6 +1466,218 @@ extern "C" __global__ void rmsnorm_f32in(
 }
 """
 
+# ============================================================================
+# Gemma 4 kernels (dedicated path — Llama path untouched)
+# ============================================================================
+# Verified against HF modeling_gemma4.py. Correctness-first C-strings; the
+# CUDA→HIP transform in compile_kernel handles ROCm.
+
+# Gemma 4 RMSNorm (fp32 in → fp16 out). Verified against HF modeling_gemma4.py
+# Gemma4RMSNorm.forward: `normed * weight` (PLAIN multiply). NOTE this differs
+# from Gemma2/3 which used `normed * (1.0 + weight)`. Gemma 4 stores norm
+# weights centered at 1.0, so plain multiply matches. Confirmed at parity gate.
+GEMMA_RMSNORM_F32IN_CUDA = CUDA_HEADER + r"""
+extern "C" __global__ void gemma_rmsnorm_f32in(
+    half* __restrict__ out,
+    const float* __restrict__ input,
+    const half* __restrict__ weight,
+    int hidden_size,
+    float eps
+) {
+    int row = blockIdx.x;
+    int tid = threadIdx.x;
+
+    const float* x = input + row * hidden_size;
+    half* o = out + row * hidden_size;
+
+    float sum_sq = 0.0f;
+    for (int i = tid; i < hidden_size; i += blockDim.x) {
+        float val = x[i];
+        sum_sq += val * val;
+    }
+
+    for (int offset = 16; offset > 0; offset >>= 1)
+        sum_sq += __shfl_xor_sync(0xffffffff, sum_sq, offset);
+
+    __shared__ float warp_sums[32];
+    int warp_id = tid / 32;
+    int lane_id = tid % 32;
+    if (lane_id == 0) warp_sums[warp_id] = sum_sq;
+    __syncthreads();
+
+    if (warp_id == 0) {
+        sum_sq = (lane_id < (blockDim.x + 31) / 32) ? warp_sums[lane_id] : 0.0f;
+        for (int offset = 16; offset > 0; offset >>= 1)
+            sum_sq += __shfl_xor_sync(0xffffffff, sum_sq, offset);
+    }
+
+    __shared__ float rms_shared;
+    if (tid == 0) rms_shared = rsqrtf(sum_sq / (float)hidden_size + eps);
+    __syncthreads();
+    float rms = rms_shared;
+
+    for (int i = tid; i < hidden_size; i += blockDim.x) {
+        float val = x[i];
+        float w = __half2float(weight[i]);
+        o[i] = __float2half(val * rms * w);
+    }
+}
+"""
+
+# Gemma RMSNorm with fp16 input + fp16 output (used inside the layer between
+# sublayers where the buffer is already fp16). Same plain-weight multiply.
+GEMMA_RMSNORM_CUDA = CUDA_HEADER + r"""
+extern "C" __global__ void gemma_rmsnorm(
+    half* __restrict__ out,
+    const half* __restrict__ input,
+    const half* __restrict__ weight,
+    int hidden_size,
+    float eps
+) {
+    int row = blockIdx.x;
+    int tid = threadIdx.x;
+
+    const half* x = input + row * hidden_size;
+    half* o = out + row * hidden_size;
+
+    float sum_sq = 0.0f;
+    for (int i = tid; i < hidden_size; i += blockDim.x) {
+        float val = __half2float(x[i]);
+        sum_sq += val * val;
+    }
+
+    for (int offset = 16; offset > 0; offset >>= 1)
+        sum_sq += __shfl_xor_sync(0xffffffff, sum_sq, offset);
+
+    __shared__ float warp_sums[32];
+    int warp_id = tid / 32;
+    int lane_id = tid % 32;
+    if (lane_id == 0) warp_sums[warp_id] = sum_sq;
+    __syncthreads();
+
+    if (warp_id == 0) {
+        sum_sq = (lane_id < (blockDim.x + 31) / 32) ? warp_sums[lane_id] : 0.0f;
+        for (int offset = 16; offset > 0; offset >>= 1)
+            sum_sq += __shfl_xor_sync(0xffffffff, sum_sq, offset);
+    }
+
+    __shared__ float rms_shared;
+    if (tid == 0) rms_shared = rsqrtf(sum_sq / (float)hidden_size + eps);
+    __syncthreads();
+    float rms = rms_shared;
+
+    for (int i = tid; i < hidden_size; i += blockDim.x) {
+        float val = __half2float(x[i]);
+        float w = __half2float(weight[i]);
+        o[i] = __float2half(val * rms * w);
+    }
+}
+"""
+
+# QK-norm: per-head RMSNorm over head_dim, applied to Q or K in place.
+# Input layout: [num_rows, num_heads, head_dim] flattened. One block per
+# (row, head). Gemma (1.0 + weight) convention; weight is [head_dim].
+QK_NORM_CUDA = CUDA_HEADER + r"""
+extern "C" __global__ void qk_norm(
+    half* __restrict__ qk,           // [num_rows * num_heads * head_dim]
+    const half* __restrict__ weight, // [head_dim]
+    int num_rows,
+    int num_heads,
+    int head_dim,
+    float eps
+) {
+    // One block per (row, head); blockIdx.x in [0, num_rows*num_heads)
+    int rh = blockIdx.x;
+    if (rh >= num_rows * num_heads) return;
+    int tid = threadIdx.x;
+
+    half* x = qk + (long long)rh * head_dim;
+
+    float sum_sq = 0.0f;
+    for (int i = tid; i < head_dim; i += blockDim.x) {
+        float val = __half2float(x[i]);
+        sum_sq += val * val;
+    }
+
+    for (int offset = 16; offset > 0; offset >>= 1)
+        sum_sq += __shfl_xor_sync(0xffffffff, sum_sq, offset);
+
+    __shared__ float warp_sums[32];
+    int warp_id = tid / 32;
+    int lane_id = tid % 32;
+    if (lane_id == 0) warp_sums[warp_id] = sum_sq;
+    __syncthreads();
+
+    if (warp_id == 0) {
+        sum_sq = (lane_id < (blockDim.x + 31) / 32) ? warp_sums[lane_id] : 0.0f;
+        for (int offset = 16; offset > 0; offset >>= 1)
+            sum_sq += __shfl_xor_sync(0xffffffff, sum_sq, offset);
+    }
+
+    __shared__ float rms_shared;
+    if (tid == 0) rms_shared = rsqrtf(sum_sq / (float)head_dim + eps);
+    __syncthreads();
+    float rms = rms_shared;
+
+    for (int i = tid; i < head_dim; i += blockDim.x) {
+        float val = __half2float(x[i]);
+        float w = __half2float(weight[i]);
+        x[i] = __float2half(val * rms * w);
+    }
+}
+"""
+
+# GeGLU: out = gelu_pytorch_tanh(gate) * up   (Gemma MLP activation)
+# gelu_tanh(x) = 0.5*x*(1 + tanh( sqrt(2/pi) * (x + 0.044715 x^3) ))
+GEGLU_MUL_CUDA = CUDA_HEADER + r"""
+extern "C" __global__ void geglu_mul(
+    half* __restrict__ out,
+    const half* __restrict__ gate,
+    const half* __restrict__ up,
+    int n
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n) {
+        float g = __half2float(gate[idx]);
+        float u = __half2float(up[idx]);
+        const float k = 0.7978845608028654f;  // sqrt(2/pi)
+        float inner = k * (g + 0.044715f * g * g * g);
+        float gelu_g = 0.5f * g * (1.0f + tanhf(inner));
+        out[idx] = __float2half(gelu_g * u);
+    }
+}
+"""
+
+# Per-layer learned scalar: in-place out *= scalar (fp32 residual stream).
+# Gemma 4 multiplies the layer output by layers.N.layer_scalar at layer end.
+LAYER_SCALAR_MUL_F32_CUDA = CUDA_HEADER + r"""
+extern "C" __global__ void layer_scalar_mul_f32(
+    float* __restrict__ data,
+    const half* __restrict__ scalar,  // [1]
+    int n
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n) {
+        data[idx] = data[idx] * __half2float(scalar[0]);
+    }
+}
+"""
+
+# Final-logit softcap (in place): logits = cap * tanh(logits / cap)
+LOGIT_SOFTCAP_CUDA = CUDA_HEADER + r"""
+extern "C" __global__ void logit_softcap(
+    half* __restrict__ logits,
+    int n,
+    float cap
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n) {
+        float v = __half2float(logits[idx]);
+        logits[idx] = __float2half(cap * tanhf(v / cap));
+    }
+}
+"""
+
 # Embedding lookup → fp32 output
 EMBEDDING_LOOKUP_F32OUT_CUDA = CUDA_HEADER + r"""
 extern "C" __global__ void embedding_lookup_f32out(
@@ -2317,6 +2529,13 @@ class InferenceKernels:
         "embedding_lookup_f32out": EMBEDDING_LOOKUP_F32OUT_CUDA,
         "residual_add_f32": RESIDUAL_ADD_F32_CUDA,
         "fused_residual_rmsnorm_f32": FUSED_RESIDUAL_RMSNORM_F32_CUDA,
+        # Gemma 4 dedicated-path kernels
+        "gemma_rmsnorm_f32in": GEMMA_RMSNORM_F32IN_CUDA,
+        "gemma_rmsnorm": GEMMA_RMSNORM_CUDA,
+        "qk_norm": QK_NORM_CUDA,
+        "geglu_mul": GEGLU_MUL_CUDA,
+        "layer_scalar_mul_f32": LAYER_SCALAR_MUL_F32_CUDA,
+        "logit_softcap": LOGIT_SOFTCAP_CUDA,
         # GEMV kernels (M=1 decode optimization)
         "dequant_gemv_int4": DEQUANT_GEMV_INT4_CUDA,
         "batched_dequant_gemv_int4": BATCHED_DEQUANT_GEMV_INT4_CUDA,
