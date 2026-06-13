@@ -124,6 +124,40 @@ class ModelRunner:
         # if self._wmma_available:
         #     self._repack_weights_for_wmma()
 
+        # ---- Gemma 4 dedicated-path setup ----
+        self._is_gemma4 = (config.arch == "gemma4")
+        if self._is_gemma4:
+            self._gemma4_init()
+
+    def _gemma4_init(self):
+        """Precompute Gemma 4 per-layer attention metadata + embed-scale buffer."""
+        import math as _math
+        cfg = self._config
+        layer_types = cfg.layer_types or (["sliding_attention"] * cfg.num_layers)
+        ghd = cfg.global_head_dim or cfg.head_dim
+        gkv = cfg.global_num_kv_heads or cfg.num_kv_heads
+        sliding_theta = cfg.rope_theta
+        full_theta = cfg.global_rope_theta or cfg.rope_theta
+        prf = cfg.partial_rotary_factor or 1.0
+
+        # Per-layer: (head_dim, num_kv_heads, rope_theta, rotary_dim, is_sliding)
+        self._g4_layers = []
+        for i in range(cfg.num_layers):
+            is_sliding = (layer_types[i] == "sliding_attention")
+            if is_sliding:
+                hd, nkv, theta, rot = cfg.head_dim, cfg.num_kv_heads, sliding_theta, cfg.head_dim
+            else:
+                hd, nkv, theta, rot = ghd, gkv, full_theta, int(ghd * prf)
+            self._g4_layers.append((hd, nkv, theta, rot, is_sliding))
+
+        # embed scale = sqrt(hidden_size), stored as a half[1] GPU buffer (reuses
+        # the layer_scalar_mul_f32 kernel which multiplies an fp32 buffer by half[1]).
+        embed_scale = _math.sqrt(cfg.hidden_size)
+        self._g4_embed_scale_buf = self._gpu_mem.allocate((1,), float16)
+        self._gpu_mem.copy_host_to_device(
+            _floats_to_fp16_bytes([embed_scale]), self._g4_embed_scale_buf)
+        self._g4_softcap = cfg.final_logit_softcapping or 0.0
+
     def _repack_weights_for_wmma(self):
         """Repack all INT4 weight matrices into tiled format for WMMA coalesced access.
 
@@ -291,6 +325,23 @@ class ModelRunner:
         seq_lens_tensor = self._upload_int32(meta.seq_lengths)
         kv_slab = self._get_kv_slab_tensor()
 
+        # Gemma 4 uses a dedicated forward path (4 norms, QK-norm, dual RoPE,
+        # GeGLU, layer_scalar, per-layer head_dim). Llama path below untouched.
+        if self._is_gemma4:
+            # Embedding scale: hidden *= sqrt(hidden_size)
+            self._kernels.launch(
+                "layer_scalar_mul_f32",
+                ((seq_len * self._hidden_size + 255) // 256,),
+                (256,),
+                self._scratch.hidden_f32, self._g4_embed_scale_buf,
+                seq_len * self._hidden_size,
+            )
+            for layer in range(self._num_layers):
+                self._gemma4_block_prefill(layer, seq_len)
+            self._gpu_mem.free(block_table_tensor)
+            self._gpu_mem.free(seq_lens_tensor)
+            return self._gemma4_finalize(seq_len, token_tensor)
+
         # Process each transformer layer
         for layer in range(self._num_layers):
             self._transformer_block_prefill(
@@ -327,6 +378,181 @@ class ModelRunner:
 
         self._gpu_mem.free(token_tensor)
         return logits_data
+
+    # ================================================================
+    # Gemma 4 dedicated forward path (text). Llama path untouched.
+    # ================================================================
+
+    def _g4_rmsnorm_f32in(self, out, inp_f32, weight, num_rows):
+        bs = min(256, self._hidden_size)
+        w = self._make_tensor_from_ptr(weight.data_ptr, (self._hidden_size,))
+        self._kernels.launch("gemma_rmsnorm_f32in", (num_rows,), (bs,),
+                             out, inp_f32, w, self._hidden_size, self._rms_eps)
+
+    def _g4_headnorm(self, kernel, buf, weight, num_rows, num_heads, head_dim):
+        """Per-head RMSNorm (qk_norm with weight, or vnorm without)."""
+        bs = min(256, head_dim)
+        if weight is not None:
+            w = self._make_tensor_from_ptr(weight.data_ptr, (head_dim,))
+            self._kernels.launch(kernel, (num_rows * num_heads,), (bs,),
+                                 buf, w, num_rows, num_heads, head_dim, self._rms_eps)
+        else:
+            self._kernels.launch(kernel, (num_rows * num_heads,), (bs,),
+                                 buf, num_rows, num_heads, head_dim, self._rms_eps)
+
+    def _gemma4_block_prefill(self, layer: int, seq_len: int):
+        """One Gemma 4 transformer layer (prefill). Verified vs HF modeling_gemma4.
+
+        residual = h
+        h = input_layernorm(h)
+        h = self_attn(h)               # QK-norm, dual RoPE, per-layer head_dim
+        h = post_attention_layernorm(h)
+        h = residual + h
+        residual = h
+        h = pre_feedforward_layernorm(h)
+        h = GeGLU_MLP(h)
+        h = post_feedforward_layernorm(h)
+        h = residual + h
+        h = h * layer_scalar
+        """
+        hd, n_kv, theta, rot_dim, is_sliding = self._g4_layers[layer]
+        n = seq_len * self._hidden_size
+        q_dim = self._num_heads * hd
+        kv_dim = n_kv * hd
+        lp = f"model.layers.{layer}"
+
+        q_buf = self._scratch.qkv
+        k_buf = self._scratch.attn_out
+        v_buf = self._scratch.mlp_out
+
+        # --- residual save + input_layernorm ---
+        self._copy_tensor_f32(self._scratch.residual_f32, self._scratch.hidden_f32, n)
+        self._g4_rmsnorm_f32in(self._scratch.norm_out, self._scratch.hidden_f32,
+                               self._get_layer_weight(f"{lp}.input_layernorm.weight"), seq_len)
+
+        # --- Q/K/V projections (per-layer dims) ---
+        self._launch_matmul(q_buf, self._scratch.norm_out,
+                            self._get_layer_weight(f"{lp}.self_attn.q_proj.weight"),
+                            seq_len, q_dim, self._hidden_size)
+        self._launch_matmul(k_buf, self._scratch.norm_out,
+                            self._get_layer_weight(f"{lp}.self_attn.k_proj.weight"),
+                            seq_len, kv_dim, self._hidden_size)
+        if is_sliding:
+            # sliding layer has its own v_proj
+            self._launch_matmul(v_buf, self._scratch.norm_out,
+                                self._get_layer_weight(f"{lp}.self_attn.v_proj.weight"),
+                                seq_len, kv_dim, self._hidden_size)
+        else:
+            # full layer: attention_k_eq_v → value = raw k_proj output (pre k_norm)
+            self._copy_tensor_fp16(v_buf, k_buf, seq_len * kv_dim)
+
+        # --- QK-norm (per head) + v-norm (no weight) ---
+        self._g4_headnorm("qk_norm", q_buf,
+                          self._get_layer_weight(f"{lp}.self_attn.q_norm.weight"),
+                          seq_len, self._num_heads, hd)
+        self._g4_headnorm("qk_norm", k_buf,
+                          self._get_layer_weight(f"{lp}.self_attn.k_norm.weight"),
+                          seq_len, n_kv, hd)
+        self._g4_headnorm("vnorm", v_buf, None, seq_len, n_kv, hd)
+
+        # --- RoPE (per-layer theta + partial rotary) on Q and K ---
+        half_rot = rot_dim // 2
+        total_rope = seq_len * max(self._num_heads, n_kv) * half_rot
+        self._kernels.launch("gemma_rotary_embedding",
+                             ((total_rope + 255) // 256,), (256,),
+                             q_buf, k_buf, seq_len, self._num_heads, n_kv, hd, rot_dim,
+                             self._prefill_pos_zero_buf, theta)
+
+        # --- causal attention (scale=1.0; QK-norm carries scaling) ---
+        # NOTE: sliding-window masking not applied — identical to full causal for
+        # seq_len <= sliding_window (1024). Parity gate uses short prompts.
+        attn_out = self._scratch.norm_out  # free now
+        shared_mem = seq_len * 4
+        self._kernels.launch("prefill_attention",
+                             (seq_len, self._num_heads), (min(256, hd),),
+                             attn_out, q_buf, k_buf, v_buf,
+                             seq_len, self._num_heads, n_kv, hd, 1.0,
+                             shared_mem_bytes=shared_mem)
+
+        # --- O projection → fp16 hidden ---
+        self._launch_matmul(self._scratch.hidden, attn_out,
+                            self._get_layer_weight(f"{lp}.self_attn.o_proj.weight"),
+                            seq_len, self._hidden_size, q_dim)
+
+        # --- post_attention_layernorm(attn_out), then residual add ---
+        # h = residual + post_attn_norm(o_proj_out)
+        self._g4_rmsnorm_fp16(self._scratch.hidden,
+                              self._get_layer_weight(f"{lp}.post_attention_layernorm.weight"),
+                              seq_len)
+        # hidden_f32 = residual_f32 + hidden(fp16)
+        self._kernels.launch("residual_add_f32", ((n + 255) // 256,), (256,),
+                             self._scratch.hidden_f32, self._scratch.residual_f32,
+                             self._scratch.hidden, n)
+
+        # --- MLP block ---
+        self._copy_tensor_f32(self._scratch.residual_f32, self._scratch.hidden_f32, n)
+        self._g4_rmsnorm_f32in(self._scratch.norm_out, self._scratch.hidden_f32,
+                               self._get_layer_weight(f"{lp}.pre_feedforward_layernorm.weight"), seq_len)
+        self._launch_matmul(self._scratch.mlp_gate, self._scratch.norm_out,
+                            self._get_layer_weight(f"{lp}.mlp.gate_proj.weight"),
+                            seq_len, self._intermediate_size, self._hidden_size)
+        self._launch_matmul(self._scratch.mlp_up, self._scratch.norm_out,
+                            self._get_layer_weight(f"{lp}.mlp.up_proj.weight"),
+                            seq_len, self._intermediate_size, self._hidden_size)
+        n_mlp = seq_len * self._intermediate_size
+        self._kernels.launch("geglu_mul", ((n_mlp + 255) // 256,), (256,),
+                             self._scratch.mlp_gate, self._scratch.mlp_gate,
+                             self._scratch.mlp_up, n_mlp)
+        self._launch_matmul(self._scratch.hidden, self._scratch.mlp_gate,
+                            self._get_layer_weight(f"{lp}.mlp.down_proj.weight"),
+                            seq_len, self._hidden_size, self._intermediate_size)
+        # post_feedforward_layernorm(mlp_out), then residual add
+        self._g4_rmsnorm_fp16(self._scratch.hidden,
+                              self._get_layer_weight(f"{lp}.post_feedforward_layernorm.weight"),
+                              seq_len)
+        self._kernels.launch("residual_add_f32", ((n + 255) // 256,), (256,),
+                             self._scratch.hidden_f32, self._scratch.residual_f32,
+                             self._scratch.hidden, n)
+
+        # --- per-layer learned scalar: hidden_f32 *= layer_scalar[1] ---
+        ls = self._get_layer_weight(f"{lp}.layer_scalar")
+        ls_t = self._make_tensor_from_ptr(ls.data_ptr, (1,))
+        self._kernels.launch("layer_scalar_mul_f32", ((n + 255) // 256,), (256,),
+                             self._scratch.hidden_f32, ls_t, n)
+
+    def _g4_rmsnorm_fp16(self, buf, weight, num_rows):
+        """In-place-ish Gemma RMSNorm on an fp16 buffer (out == in via norm_out)."""
+        bs = min(256, self._hidden_size)
+        w = self._make_tensor_from_ptr(weight.data_ptr, (self._hidden_size,))
+        # gemma_rmsnorm reads buf, writes buf (safe: each row independent, but
+        # kernel reads all of a row before writing — use norm_out as temp).
+        self._kernels.launch("gemma_rmsnorm", (num_rows,), (bs,),
+                             buf, buf, w, self._hidden_size, self._rms_eps)
+
+    def _copy_tensor_fp16(self, dst, src, num_elements, stream=None):
+        """D2D copy of fp16 elements."""
+        nbytes = num_elements * 2
+        if stream is not None:
+            self._gpu_mem.copy_device_to_device_async(src.data_ptr, dst.data_ptr, nbytes, stream)
+        else:
+            self._gpu_mem.copy_device_to_device(src.data_ptr, dst.data_ptr, nbytes)
+
+    def _gemma4_finalize(self, seq_len: int, token_tensor):
+        """Final norm + lm_head + softcap → logits for last token."""
+        self._g4_rmsnorm_f32in(self._scratch.norm_out, self._scratch.hidden_f32,
+                               self._get_layer_weight("model.norm.weight"), seq_len)
+        lm_head = self._weights.get("lm_head.weight")
+        self._launch_matmul(self._scratch.logits, self._scratch.norm_out, lm_head,
+                            seq_len, self._config.vocab_size, self._hidden_size)
+        if self._g4_softcap > 0.0:
+            nlog = seq_len * self._config.vocab_size
+            self._kernels.launch("logit_softcap", ((nlog + 255) // 256,), (256,),
+                                 self._scratch.logits, nlog, float(self._g4_softcap))
+        logits_data = self._download_fp16(self._scratch.logits, self._config.vocab_size,
+                                          row_offset=seq_len - 1)
+        self._gpu_mem.free(token_tensor)
+        return logits_data
+
 
     # ------------------------------------------------------------------
     # Embedding extraction (for RAG dense retrieval / reranking)

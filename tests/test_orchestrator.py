@@ -290,7 +290,7 @@ class TestInferenceKernels:
         assert "tiled_dequant_matmul_int8" in names
         assert "embedding_lookup_f32out" in names
         assert "kv_cache_write" in names
-        assert len(names) == 30  # 24 core + 6 Gemma 4 dedicated-path kernels
+        assert len(names) == 32  # 24 core + 8 Gemma 4 dedicated-path kernels
 
     def test_not_compiled_initially(self):
         from zse_engine.orchestrator.kernels import InferenceKernels

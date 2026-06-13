@@ -1627,6 +1627,54 @@ extern "C" __global__ void qk_norm(
 }
 """
 
+# V-norm: per-head RMSNorm over head_dim WITHOUT weight (Gemma v_norm uses
+# with_scale=False). In place on the value buffer. One block per (row, head).
+VNORM_CUDA = CUDA_HEADER + r"""
+extern "C" __global__ void vnorm(
+    half* __restrict__ v,            // [num_rows * num_heads * head_dim]
+    int num_rows,
+    int num_heads,
+    int head_dim,
+    float eps
+) {
+    int rh = blockIdx.x;
+    if (rh >= num_rows * num_heads) return;
+    int tid = threadIdx.x;
+
+    half* x = v + (long long)rh * head_dim;
+
+    float sum_sq = 0.0f;
+    for (int i = tid; i < head_dim; i += blockDim.x) {
+        float val = __half2float(x[i]);
+        sum_sq += val * val;
+    }
+
+    for (int offset = 16; offset > 0; offset >>= 1)
+        sum_sq += __shfl_xor_sync(0xffffffff, sum_sq, offset);
+
+    __shared__ float warp_sums[32];
+    int warp_id = tid / 32;
+    int lane_id = tid % 32;
+    if (lane_id == 0) warp_sums[warp_id] = sum_sq;
+    __syncthreads();
+
+    if (warp_id == 0) {
+        sum_sq = (lane_id < (blockDim.x + 31) / 32) ? warp_sums[lane_id] : 0.0f;
+        for (int offset = 16; offset > 0; offset >>= 1)
+            sum_sq += __shfl_xor_sync(0xffffffff, sum_sq, offset);
+    }
+
+    __shared__ float rms_shared;
+    if (tid == 0) rms_shared = rsqrtf(sum_sq / (float)head_dim + eps);
+    __syncthreads();
+    float rms = rms_shared;
+
+    for (int i = tid; i < head_dim; i += blockDim.x) {
+        x[i] = __float2half(__half2float(x[i]) * rms);
+    }
+}
+"""
+
 # GeGLU: out = gelu_pytorch_tanh(gate) * up   (Gemma MLP activation)
 # gelu_tanh(x) = 0.5*x*(1 + tanh( sqrt(2/pi) * (x + 0.044715 x^3) ))
 GEGLU_MUL_CUDA = CUDA_HEADER + r"""
@@ -1674,6 +1722,65 @@ extern "C" __global__ void logit_softcap(
     if (idx < n) {
         float v = __half2float(logits[idx]);
         logits[idx] = __float2half(cap * tanhf(v / cap));
+    }
+}
+"""
+
+# Gemma 4 RoPE with per-layer theta + partial rotary.
+# Sliding layers: rotary_dim == head_dim, theta 10000 (full rotation).
+# Full layers: rotary_dim == head_dim * partial_rotary_factor (0.25), theta 1e6.
+# Only the first `rotary_dim` channels rotate (NeoX/rotate-half style over that
+# sub-block: pair i pairs with i + rotary_dim/2); the rest pass through unchanged.
+GEMMA_ROTARY_EMBEDDING_CUDA = CUDA_HEADER + r"""
+extern "C" __global__ void gemma_rotary_embedding(
+    half* __restrict__ q,       // [seq_len, num_heads, head_dim]
+    half* __restrict__ k,       // [seq_len, num_kv_heads, head_dim]
+    int seq_len,
+    int num_heads,
+    int num_kv_heads,
+    int head_dim,
+    int rotary_dim,             // how many leading channels to rotate
+    const int* __restrict__ pos_buf,
+    float theta_base
+) {
+    int position_offset = pos_buf[0];
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int half_rot = rotary_dim / 2;
+    int total_q = seq_len * num_heads * half_rot;
+    int total_k = seq_len * num_kv_heads * half_rot;
+
+    if (idx < total_q) {
+        int pair = idx % half_rot;
+        int head = (idx / half_rot) % num_heads;
+        int pos = idx / (half_rot * num_heads);
+
+        float freq = 1.0f / powf(theta_base, (float)(2 * pair) / (float)rotary_dim);
+        float angle = (float)(pos + position_offset) * freq;
+        float cos_val = cosf(angle);
+        float sin_val = sinf(angle);
+
+        int base = pos * num_heads * head_dim + head * head_dim;
+        float q0 = __half2float(q[base + pair]);
+        float q1 = __half2float(q[base + pair + half_rot]);
+        q[base + pair]           = __float2half(q0 * cos_val - q1 * sin_val);
+        q[base + pair + half_rot] = __float2half(q1 * cos_val + q0 * sin_val);
+    }
+
+    if (idx < total_k) {
+        int pair = idx % half_rot;
+        int head = (idx / half_rot) % num_kv_heads;
+        int pos = idx / (half_rot * num_kv_heads);
+
+        float freq = 1.0f / powf(theta_base, (float)(2 * pair) / (float)rotary_dim);
+        float angle = (float)(pos + position_offset) * freq;
+        float cos_val = cosf(angle);
+        float sin_val = sinf(angle);
+
+        int base = pos * num_kv_heads * head_dim + head * head_dim;
+        float k0 = __half2float(k[base + pair]);
+        float k1 = __half2float(k[base + pair + half_rot]);
+        k[base + pair]           = __float2half(k0 * cos_val - k1 * sin_val);
+        k[base + pair + half_rot] = __float2half(k1 * cos_val + k0 * sin_val);
     }
 }
 """
@@ -2536,6 +2643,8 @@ class InferenceKernels:
         "geglu_mul": GEGLU_MUL_CUDA,
         "layer_scalar_mul_f32": LAYER_SCALAR_MUL_F32_CUDA,
         "logit_softcap": LOGIT_SOFTCAP_CUDA,
+        "gemma_rotary_embedding": GEMMA_ROTARY_EMBEDDING_CUDA,
+        "vnorm": VNORM_CUDA,
         # GEMV kernels (M=1 decode optimization)
         "dequant_gemv_int4": DEQUANT_GEMV_INT4_CUDA,
         "batched_dequant_gemv_int4": BATCHED_DEQUANT_GEMV_INT4_CUDA,
