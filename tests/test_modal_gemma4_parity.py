@@ -36,7 +36,7 @@ MODEL = "google/gemma-4-12B-it"
 PROMPT = "The capital of France is"
 
 
-@app.function(gpu="A10G", image=zse_image, timeout=2400,
+@app.function(gpu="A100-80GB", image=zse_image, timeout=2400,
               secrets=[modal.Secret.from_name("huggingface")],
               volumes={"/root/zse_cache": zse_cache, "/root/hf_cache": hf_cache})
 def parity():
@@ -46,6 +46,7 @@ def parity():
 
     sys.path.insert(0, "/root/zse-engine")
     sys.path.insert(0, "/root/zse-compiler")
+    os.environ["ZSE_G4_DEBUG"] = "1"
     token = os.environ.get("HF_TOKEN")
 
     print("=== Gemma 4 12B PARITY GATE ===", flush=True)
@@ -58,10 +59,10 @@ def parity():
     print(f"prompt={PROMPT!r}  tokens={input_ids}", flush=True)
 
     # ---- 2. ZSE forward (prefill → last-token logits) ----
-    zse_path = "/root/zse_cache/gemma4-12b.zse"
+    zse_path = "/root/zse_cache/gemma4-12b-v2.zse"
     print(f"\n[ZSE] loading {zse_path}", flush=True)
-    from zse_engine.orchestrator.engine import Engine
-    eng = Engine(zse_path, max_seq_len=512, quiet=False)
+    from zse_engine.orchestrator.engine import ZSEEngine
+    eng = ZSEEngine(zse_path, max_seq_len=512, quiet=False)
     runner = eng._runner
     print("[ZSE] running prefill...", flush=True)
     zse_logits_bytes = runner.prefill(input_ids, seq_id=0)

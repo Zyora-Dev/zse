@@ -165,9 +165,13 @@ class Gemma4Adapter(ArchAdapter):
 
     def should_quantize(self, tensor_name: str) -> bool:
         """Quantize the big text-backbone matmuls; keep modality projections,
-        norms, and embeddings in fp16 (small, precision-sensitive)."""
+        norms, embeddings, and the tiny per-layer scalar in fp16."""
         # Never quantize modality projection / embedding / norm tensors.
         if tensor_name.startswith("vision.") or tensor_name.startswith("audio."):
+            return False
+        # layer_scalar is a [1]-element learned scalar — INT4 with group_size
+        # 128 would destroy it (1 element per 128-wide group). Keep fp16.
+        if "layer_scalar" in tensor_name:
             return False
         return super().should_quantize(tensor_name)
 

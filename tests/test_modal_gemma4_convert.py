@@ -79,7 +79,7 @@ def convert():
 
     # 3. Convert to .zse (INT4) — this is the real test
     from zse_engine.format.convert import convert_hf_to_zse
-    out_path = "/root/zse_cache/gemma4-12b.zse"
+    out_path = "/root/zse_cache/gemma4-12b-v2.zse"
 
     seen = {"count": 0, "last": ""}
     def progress(name, cur, total):

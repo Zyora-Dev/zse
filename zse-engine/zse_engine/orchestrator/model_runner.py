@@ -328,6 +328,7 @@ class ModelRunner:
         # Gemma 4 uses a dedicated forward path (4 norms, QK-norm, dual RoPE,
         # GeGLU, layer_scalar, per-layer head_dim). Llama path below untouched.
         if self._is_gemma4:
+            self._g4_dbg("after embed", seq_len)
             # Embedding scale: hidden *= sqrt(hidden_size)
             self._kernels.launch(
                 "layer_scalar_mul_f32",
@@ -336,8 +337,11 @@ class ModelRunner:
                 self._scratch.hidden_f32, self._g4_embed_scale_buf,
                 seq_len * self._hidden_size,
             )
+            self._g4_dbg("after embed-scale", seq_len)
             for layer in range(self._num_layers):
                 self._gemma4_block_prefill(layer, seq_len)
+                if layer in (0, 1, self._num_layers - 1):
+                    self._g4_dbg(f"after layer {layer}", seq_len)
             self._gpu_mem.free(block_table_tensor)
             self._gpu_mem.free(seq_lens_tensor)
             return self._gemma4_finalize(seq_len, token_tensor)
@@ -382,6 +386,24 @@ class ModelRunner:
     # ================================================================
     # Gemma 4 dedicated forward path (text). Llama path untouched.
     # ================================================================
+
+    def _g4_dbg(self, label, seq_len):
+        """Debug: print L2 norm + last-row sample of hidden_f32 (env-gated)."""
+        import os as _os
+        if not _os.environ.get("ZSE_G4_DEBUG"):
+            return
+        import struct as _st
+        n = seq_len * self._hidden_size
+        view = Tensor(shape=(n,))
+        view._data_ptr = self._scratch.hidden_f32.data_ptr
+        view._nbytes = n * 4
+        data = self._gpu_mem.copy_device_to_host(view)
+        vals = _st.unpack(f"<{n}f", data[:n * 4])
+        import math as _m
+        l2 = _m.sqrt(sum(v * v for v in vals))
+        nan = any(v != v for v in vals)
+        last = vals[(seq_len - 1) * self._hidden_size:(seq_len - 1) * self._hidden_size + 4]
+        print(f"[G4DBG] {label}: L2={l2:.4f} nan={nan} last_row[:4]={[round(x,4) for x in last]}", flush=True)
 
     def _g4_rmsnorm_f32in(self, out, inp_f32, weight, num_rows):
         bs = min(256, self._hidden_size)
@@ -541,7 +563,11 @@ class ModelRunner:
         """Final norm + lm_head + softcap → logits for last token."""
         self._g4_rmsnorm_f32in(self._scratch.norm_out, self._scratch.hidden_f32,
                                self._get_layer_weight("model.norm.weight"), seq_len)
-        lm_head = self._weights.get("lm_head.weight")
+        # Gemma 4 ties lm_head to embed_tokens (no separate lm_head weight).
+        if self._config.tie_word_embeddings:
+            lm_head = self._weights.get("embed_tokens.weight")
+        else:
+            lm_head = self._weights.get("lm_head.weight")
         self._launch_matmul(self._scratch.logits, self._scratch.norm_out, lm_head,
                             seq_len, self._config.vocab_size, self._hidden_size)
         if self._g4_softcap > 0.0:
