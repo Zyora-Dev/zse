@@ -49,6 +49,7 @@ class BlockPool:
         head_dim: int,
         num_layers: int,
         kv_dtype_bytes: int = 2,  # float16 = 2 bytes
+        per_layer_kv_elems: Optional[List[int]] = None,
     ):
         self._gpu_mem = gpu_mem
         self._block_size_tokens = block_size_tokens
@@ -57,11 +58,36 @@ class BlockPool:
         self._num_layers = num_layers
         self._kv_dtype_bytes = kv_dtype_bytes
 
-        # Compute block size in bytes
-        # Per token per layer: num_kv_heads * head_dim * dtype_bytes * 2 (K and V)
-        self._bytes_per_token = num_kv_heads * head_dim * kv_dtype_bytes * 2
-        self._bytes_per_token_all_layers = self._bytes_per_token * num_layers
-        self._block_bytes = block_size_tokens * self._bytes_per_token_all_layers
+        # Per-layer KV element count (K only; V is the same size) PER TOKEN.
+        # Uniform models (Llama/Qwen/Gemma2): every layer = num_kv_heads*head_dim.
+        # Gemma 4: sliding layers = 8*256, full layers = 1*512 — varies per layer.
+        if per_layer_kv_elems is None:
+            per_layer_kv_elems = [num_kv_heads * head_dim] * num_layers
+        if len(per_layer_kv_elems) != num_layers:
+            raise ValueError(
+                f"per_layer_kv_elems has {len(per_layer_kv_elems)} entries, "
+                f"expected num_layers={num_layers}"
+            )
+        self._per_layer_kv_elems = list(per_layer_kv_elems)
+
+        # Per-layer bytes per token (K + V). Cumulative offsets give each layer's
+        # slot start within a block (used by the per-layer cache-write / attention
+        # kernels). For uniform models these collapse to layer * uniform_stride.
+        self._per_layer_token_bytes = [
+            e * kv_dtype_bytes * 2 for e in self._per_layer_kv_elems  # *2 = K and V
+        ]
+        self._layer_byte_offsets: List[int] = []
+        acc = 0
+        for tb in self._per_layer_token_bytes:
+            self._layer_byte_offsets.append(acc)
+            acc += tb * block_size_tokens
+        self._block_bytes = acc  # block_size * sum(per-layer K+V bytes)
+
+        # Back-compat scalar fields (uniform case). For non-uniform models these
+        # describe layer 0 only; callers needing exact per-layer math use the
+        # per-layer accessors below.
+        self._bytes_per_token = self._per_layer_token_bytes[0]
+        self._bytes_per_token_all_layers = sum(self._per_layer_token_bytes)
 
         # Cap budget to actual free GPU memory (minus 512MB safety margin)
         # to handle fragmentation after weight uploads
@@ -132,6 +158,19 @@ class BlockPool:
     @property
     def bytes_per_token_all_layers(self) -> int:
         return self._bytes_per_token_all_layers
+
+    @property
+    def is_uniform_kv(self) -> bool:
+        """True if every layer has the same KV size (Llama/Qwen/Gemma2)."""
+        return len(set(self._per_layer_kv_elems)) == 1
+
+    def layer_kv_elems(self, layer: int) -> int:
+        """K-element count per token for a given layer (V is the same size)."""
+        return self._per_layer_kv_elems[layer]
+
+    def layer_byte_offset(self, layer: int) -> int:
+        """Byte offset of a layer's KV slot within a block (K+V interleaved)."""
+        return self._layer_byte_offsets[layer]
 
     @property
     def total_bytes(self) -> int:
