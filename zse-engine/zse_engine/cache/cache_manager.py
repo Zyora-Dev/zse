@@ -111,6 +111,7 @@ class KVCacheManager:
             num_kv_heads=config.num_kv_heads,
             head_dim=config.head_dim,
             num_layers=config.num_layers,
+            per_layer_kv_elems=self._build_per_layer_kv_elems(config),
         )
 
         # GPU copy function for COW
@@ -130,6 +131,30 @@ class KVCacheManager:
         self._prompt_lengths: Dict[int, int] = {}
         # Track sequences currently generating (protected from eviction)
         self._active_seq_ids: Set[int] = set()
+
+    @staticmethod
+    def _build_per_layer_kv_elems(config: ModelConfig):
+        """Per-layer K-element count per token (V is the same size).
+
+        Returns None for uniform-KV models (Llama/Qwen/Gemma2) so BlockPool
+        keeps its byte-identical uniform path. For Gemma 4, sliding layers use
+        num_kv_heads*head_dim while full-attention layers use
+        global_num_kv_heads*global_head_dim — so we build an explicit per-layer
+        list from config.layer_types.
+        """
+        layer_types = getattr(config, "layer_types", None)
+        global_head_dim = getattr(config, "global_head_dim", None)
+        global_num_kv_heads = getattr(config, "global_num_kv_heads", None)
+        if not layer_types or global_head_dim is None:
+            return None
+        sliding_elems = config.num_kv_heads * config.head_dim
+        full_elems = (global_num_kv_heads or config.num_kv_heads) * global_head_dim
+        if sliding_elems == full_elems:
+            return None  # uniform after all
+        return [
+            full_elems if lt == "full_attention" else sliding_elems
+            for lt in layer_types
+        ]
 
     @staticmethod
     def _auto_block_size(config: ModelConfig) -> int:
