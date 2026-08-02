@@ -606,6 +606,103 @@ def bgemv_int4_wave64(
 
 
 # ============================================================================
+# Medium-M INT4 Dequant GEMV — wavefront-64 layout, M<=16 (ROCm-tuned)
+# ============================================================================
+# Identical math + memory layout to bgemv_int4_wave64, but with 16-wide
+# accumulators so the weight-bandwidth-amortized path covers M=9..16.
+#
+# Why: the scheduler admits up to 64 concurrent sequences, but the M<=8 bgemv
+# and the M>=16 MFMA path leave a hole at M=9..15 where decode falls through to
+# the prefill-tuned tiled/MFMA kernel (which wastes matrix-core lanes padding to
+# 16). This kernel keeps the coalesced, dequant-once-reuse-M structure across
+# the full 9..16 band. The weight is still loaded ONCE per lane and reused
+# across all M rows, so weight bandwidth stays amortized as M grows.
+#
+# Constraints:
+#   - M <= 16 (uses fixed-size local_array[16] accumulator)
+#   - K % 8 == 0 (u32-aligned weight loads)
+#   - group_size >= 8 (so 8-K window stays in one group per lane)
+
+@zse.kernel
+def bgemv_int4_wave64_m16(
+    out: "half_tensor",          # [M, N]
+    weight: "uint8_tensor",      # [N, K/2] packed INT4 (low nibble first)
+    scales: "half_tensor",       # [N, num_groups]
+    zeros: "half_tensor",        # [N, num_groups]
+    inp: "half_tensor",          # [M, K]
+    M: int, N: int, K: int,
+    group_size: int,
+):
+    tid = zse.thread_id(0)
+    wf_id = tid / 64                  # 0..7
+    lane = tid % 64                   # 0..63
+    row = zse.block_id(0) * 8 + wf_id
+
+    if row < N:
+        num_groups = (K + group_size - 1) / group_size
+        half_K = K / 2
+        num_u32 = half_K / 4          # = K / 8
+
+        wq = zse.reinterpret(weight, zse.uint32)
+
+        nibbles = zse.local_array(8, zse.int32)
+        w_dq = zse.local_array(8, zse.float32)
+        acc = zse.local_array(16, zse.float32)
+
+        for m_init in range(16):
+            acc[m_init] = 0.0
+
+        # Per-lane scale/zero cache (group changes are rare since one lane's
+        # 8-K window fits inside one group when group_size >= 8).
+        prev_g: int = -1
+        s_val: float = 0.0
+        z_val: float = 0.0
+
+        scale_row_off = row * int(num_groups)
+        w_row_u32_base = row * int(num_u32)
+
+        # Each lane strides through num_u32 with stride 64.
+        for i in range(int(lane), int(num_u32), 64):
+            packed = wq[w_row_u32_base + i]
+            zse.unpack_uint4(packed, nibbles, 0)
+
+            k_base = i * 8
+            g = k_base / group_size
+            if g != prev_g:
+                s_val = zse.half_to_float(scales[scale_row_off + g])
+                z_val = zse.half_to_float(zeros[scale_row_off + g])
+                prev_g = g
+
+            # Dequant once per K-window
+            for j in range(8):
+                w_dq[j] = float(nibbles[j]) * s_val + z_val
+
+            # Accumulate against all M input rows (weight reused across M)
+            for m in range(16):
+                if m < M:
+                    inp_row_off = m * K + k_base
+                    for j2 in range(8):
+                        acc[m] = acc[m] + w_dq[j2] * zse.half_to_float(inp[inp_row_off + j2])
+
+        # ===== Wavefront-64 reduction (manual butterfly) =====
+        for m_red in range(16):
+            if m_red < M:
+                v = acc[m_red]
+                v = v + zse.warp_shuffle_xor(v, 32, 64)
+                v = v + zse.warp_shuffle_xor(v, 16, 64)
+                v = v + zse.warp_shuffle_xor(v, 8, 64)
+                v = v + zse.warp_shuffle_xor(v, 4, 64)
+                v = v + zse.warp_shuffle_xor(v, 2, 64)
+                v = v + zse.warp_shuffle_xor(v, 1, 64)
+                if lane == 0:
+                    if v > 65504.0:
+                        v = 65504.0
+                    if v < -65504.0:
+                        v = -65504.0
+                    out[m_red * N + row] = zse.float_to_half(v)
+
+
+# ============================================================================
 # Small-M INT4 Dequant GEMV — native warp-32 layout (NVIDIA/CUDA-tuned)
 # ============================================================================
 # Portable @zse.kernel replacement for the hand-written `batched_dequant_gemv_int4`

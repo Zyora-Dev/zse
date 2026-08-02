@@ -33,6 +33,16 @@ try:
 except Exception:
     BGEMV_INT4_WAVE64_HIP = None
 
+# Portable @zse.kernel wave-64 batched INT4 GEMV, M<=16 (medium-concurrency decode).
+# Same math/layout as bgemv_int4_wave64 with 16-wide accumulators — keeps the
+# weight-bandwidth-amortized path covering M=9..16 (closes the M=8->16 cliff
+# where decode otherwise falls through to the prefill-tuned tiled/MFMA kernel).
+from zse_engine.orchestrator.portable_kernels import bgemv_int4_wave64_m16 as _bgemv_wave64_m16_kernel
+try:
+    BGEMV_INT4_WAVE64_M16_HIP = _bgemv_wave64_m16_kernel.source("rocm")
+except Exception:
+    BGEMV_INT4_WAVE64_M16_HIP = None
+
 # Portable @zse.kernel wave-32 batched INT4 GEMV (small-M decode, NVIDIA-tuned).
 # IP-pure DSL replacement for the hand-written batched_dequant_gemv_int4 C-string
 # on the NVIDIA concurrent-decode hot path. Numerically identical (same dequant:
@@ -1994,7 +2004,7 @@ extern "C" __global__ void dequant_gemv_int4(
 # Key optimization: weight bandwidth is amortized across M sequences.
 BATCHED_DEQUANT_GEMV_INT4_CUDA = CUDA_HEADER + r"""
 #define BGEMV_RPB 8
-#define BGEMV_MAX_M 8
+#define BGEMV_MAX_M 16
 extern "C" __global__ void batched_dequant_gemv_int4(
     half* __restrict__ out,             // [M, N] row-major
     const unsigned char* __restrict__ weight, // [N, K/2] packed INT4
@@ -2670,6 +2680,9 @@ class InferenceKernels:
         if backend == "rocm" and BGEMV_INT4_WAVE64_HIP is not None:
             # Native wavefront-64 batched INT4 GEMV — 2.13x over bgemv on MI300X at M=4.
             self._kernel_sources["bgemv_int4_wave64"] = BGEMV_INT4_WAVE64_HIP
+        if backend == "rocm" and BGEMV_INT4_WAVE64_M16_HIP is not None:
+            # M<=16 wave-64 bgemv — closes the M=8->16 medium-concurrency cliff.
+            self._kernel_sources["bgemv_int4_wave64_m16"] = BGEMV_INT4_WAVE64_M16_HIP
         if backend == "rocm":
             # 128-bit (uint4) weight-load variant — targets HBM bandwidth ceiling.
             # Requires K%32==0 AND group_size%32==0.

@@ -76,6 +76,10 @@ class ModelRunner:
         self._kernels = kernels
         self._backend = getattr(kernels, '_backend', 'cuda')
 
+        # A/B toggle: when True, M=9..16 falls back to the tiled prefill kernel
+        # (pre-fix behavior). Used only for benchmarking the medium-M cliff fix.
+        self._disable_medium_gemv = False
+
         # Precompute constants
         self._scale = 1.0 / math.sqrt(config.head_dim)
         self._num_heads = config.num_heads
@@ -2229,6 +2233,9 @@ class ModelRunner:
         use_gemv = (M == 1)
         # For small batch (M<=8), use GEMV per row (faster than tiled GEMM for small M)
         use_multi_gemv = (M > 1 and M <= 8)
+        # Medium concurrency (M=9..16): keep the weight-bandwidth-amortized wave-64
+        # path (ROCm) instead of falling through to the prefill-tuned tiled/MFMA kernel.
+        use_medium_gemv = (M > 8 and M <= 16) and not self._disable_medium_gemv
         # GEMV: 8 rows per block. CUDA = 8 warps of 32 = 256 threads.
         # ROCm = 8 wavefronts of 64 = 512 threads.
         gemv_rpb = 8  # 8 rows per block on both CUDA and ROCm
@@ -2307,6 +2314,29 @@ class ModelRunner:
                             M, N, K, weight.group_size,
                             stream=stream,
                         )
+            elif use_medium_gemv and self._backend == "rocm" and (K % 8 == 0) and (weight.group_size >= 8):
+                # ROCm medium-concurrency (M=9..16): 16-wide wave-64 bgemv keeps the
+                # weight-bandwidth-amortized path instead of the prefill-tuned kernel.
+                self._kernels.launch(
+                    "bgemv_int4_wave64_m16",
+                    ((N + 7) // 8, 1, 1),
+                    (512, 1, 1),
+                    out, weight_t, scales_t, zeros_t, inp,
+                    M, N, K, weight.group_size,
+                    stream=stream,
+                )
+            elif use_medium_gemv:
+                # NVIDIA (and ROCm fallback) medium-concurrency (M=9..16): the
+                # batched GEMV now supports M<=16 (BGEMV_MAX_M=16), so keep the
+                # weight-bandwidth-amortized path instead of the tiled prefill kernel.
+                self._kernels.launch(
+                    "batched_dequant_gemv_int4",
+                    ((N + 8 - 1) // 8,),  # BGEMV_RPB=8
+                    (gemv_block,),
+                    out, weight_t, scales_t, zeros_t, inp,
+                    M, N, K, weight.group_size,
+                    stream=stream,
+                )
             else:
                 # ROCm/CDNA: use MFMA-accelerated v3 kernel when shapes are compatible.
                 # Constraints: K%64==0 (CHUNK_K=64) and group_size%16==0 (lane-window assumption).
