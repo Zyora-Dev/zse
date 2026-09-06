@@ -82,11 +82,16 @@ class PageTable:
         new_block_ids = []
 
         for _ in range(num_tokens):
-            # Do we need a new block?
-            if not entry.blocks or self._pool.is_block_full(entry.blocks[-1]):
+            last_idx = len(entry.blocks) - 1
+            last_is_hole = last_idx >= 0 and last_idx in entry.evicted_indices
+            if not entry.blocks or last_is_hole or self._pool.is_block_full(entry.blocks[-1]):
                 block = self._pool.alloc(seq_id=seq_id)
                 block.token_start = entry.num_tokens
-                entry.blocks.append(block)
+                if last_is_hole:
+                    entry.blocks[last_idx] = block
+                    entry.evicted_indices.discard(last_idx)
+                else:
+                    entry.blocks.append(block)
                 new_block_ids.append(block.block_id)
 
             # The last block gets one more token

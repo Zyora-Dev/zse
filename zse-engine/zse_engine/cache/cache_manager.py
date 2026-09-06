@@ -247,11 +247,18 @@ class KVCacheManager:
                     f"exceeds max_seq_len {self._config.max_seq_len}"
                 )
 
-            # Critical #5: accurate block need calculation
-            blocks_before = self._page_table.num_blocks(seq_id)
-            total_after = current + num_new_tokens
-            blocks_after = (total_after + self._block_size - 1) // self._block_size
-            new_blocks_needed = blocks_after - blocks_before
+            entry = self._page_table.get_entry(seq_id)
+            last_idx = len(entry.blocks) - 1
+            last_is_hole = last_idx >= 0 and last_idx in entry.evicted_indices
+            if last_is_hole or not entry.blocks:
+                new_blocks_needed = (
+                    num_new_tokens + self._block_size - 1
+                ) // self._block_size
+            else:
+                blocks_before = self._page_table.num_blocks(seq_id)
+                total_after = current + num_new_tokens
+                blocks_after = (total_after + self._block_size - 1) // self._block_size
+                new_blocks_needed = max(0, blocks_after - blocks_before)
 
             if new_blocks_needed > 0 and new_blocks_needed > self._pool.num_free:
                 if not self._evict_if_needed_locked(new_blocks_needed - self._pool.num_free):

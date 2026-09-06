@@ -202,6 +202,40 @@ def test_page_table_evict_block():
     print("  [PASS] page_table evict_block")
 
 
+def test_page_table_append_after_last_block_evicted():
+    """Evicting the last block must not leave it writable while on the free list."""
+    pool = BlockPool(
+        gpu_mem=None, total_bytes=1024 * 1024,
+        block_size_tokens=4, num_kv_heads=2, head_dim=64, num_layers=4,
+    )
+    pt = PageTable(pool)
+
+    pt.create_sequence(0)
+    pt.append_tokens(0, 4)  # exactly one full block
+    evicted = pt.evict_block(0, 0)
+    assert evicted is not None
+    evicted_id = evicted.block_id
+    assert evicted_id in pool._free_list
+    assert pool.get_block(evicted_id).ref_count == 0
+
+    new_ids = pt.append_tokens(0, 1)
+    assert new_ids, "should allocate a live block after last-slot eviction"
+    live = pt.get_blocks(0)
+    assert len(live) == 1
+    assert live[0].ref_count == 1
+    assert live[0].num_tokens == 1
+    assert live[0].block_id not in pool._free_list
+    assert pt.num_tokens(0) == 1
+    assert pt.get_block_ids(0) == [live[0].block_id]
+
+    other = pool.alloc(seq_id=1)
+    assert other.block_id != live[0].block_id
+    assert other.ref_count == 1
+    pool.free(other)
+
+    print("  [PASS] page_table append after last block evicted")
+
+
 # ================================================================
 # Evictor tests
 # ================================================================
@@ -613,6 +647,42 @@ def test_zero_token_extend():
     print("  [PASS] zero_token_extend")
 
 
+def test_extend_after_last_block_evicted_full_pool():
+    """extend_sequence after last-slot eviction must alloc, even if slot count is unchanged."""
+    config = _tiny_config()
+    block_bytes = 4 * 2 * 64 * 2 * 2 * 4  # 8192
+    manager = KVCacheManager(
+        config=config, gpu_mem=None,
+        budget_bytes=block_bytes * 2,  # 2 physical blocks
+        block_size=4, enable_dedup=False,
+    )
+    manager.allocate_sequence(0, list(range(4)))
+    manager.fork_sequence(0, 2)
+    manager.allocate_sequence(1, list(range(4)))
+    assert manager._pool.num_free == 0
+
+    manager._page_table.evict_block(0, 0)
+    assert manager._page_table.get_block_ids(0) == [-1]
+    assert manager._pool.num_free == 0
+
+    try:
+        manager.extend_sequence(0, 1)
+        assert False, "pool is full; extend must fail rather than reuse a shared/free block"
+    except RuntimeError:
+        pass
+
+    manager.free_sequence(1)
+    manager.extend_sequence(0, 1)
+    live = manager._page_table.get_blocks(0)
+    assert len(live) == 1
+    assert live[0].ref_count == 1
+    assert live[0].num_tokens == 1
+    assert live[0].block_id not in manager._pool._free_list
+    assert live[0].block_id not in manager._page_table.get_block_ids(2)
+
+    print("  [PASS] extend after last block evicted full pool")
+
+
 # ================================================================
 # Runner
 # ================================================================
@@ -629,6 +699,7 @@ def main():
         test_page_table_basic,
         test_page_table_fork,
         test_page_table_evict_block,
+        test_page_table_append_after_last_block_evicted,
         test_evictor_lru,
         test_evictor_smart,
         test_evictor_exclude,
@@ -645,6 +716,7 @@ def main():
         test_eviction_no_crash_on_get_block_ids,
         test_max_seq_len_enforcement,
         test_zero_token_extend,
+        test_extend_after_last_block_evicted_full_pool,
     ]
 
     passed = 0
