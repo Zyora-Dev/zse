@@ -222,3 +222,242 @@ def test_public_exports():
     assert hasattr(zse, "int16")
     assert callable(zse.local_array)
     assert callable(zse.reinterpret)
+
+
+@pytest.mark.parametrize("backend,unsigned_type", [
+    ("cuda", "unsigned int"), ("rocm", "unsigned int"), ("metal", "uint"),
+])
+def test_typed_load_and_unsigned_arithmetic(backend, unsigned_type):
+    @zse.kernel
+    def typed_load(words: "uint32_tensor", indices: "int32_tensor", out: "uint32_tensor"):
+        position = indices[0]
+        packed = words[position]
+        shifted = packed >> 4
+        masked = shifted & 15
+        selected = packed if position > 0 else masked
+        out[0] = selected
+
+    source = typed_load.source(backend)
+    assert "int position = indices[0];" in source
+    for name in ("packed", "shifted", "masked", "selected"):
+        assert f"{unsigned_type} {name} = " in source
+
+
+@pytest.mark.parametrize("backend", ["cuda", "rocm", "metal"])
+def test_sibling_loop_temporaries(backend):
+    @zse.kernel
+    def sibling_loops(out: "int32_tensor"):
+        for first in range(4):
+            temporary = first + 1
+            out[first] = temporary
+        for second in range(4):
+            temporary = second + 2
+            out[second] = temporary
+
+    source = sibling_loops.source(backend)
+    assert source.count("int temporary") == 2
+
+
+@pytest.mark.parametrize("backend", ["cuda", "rocm", "metal"])
+def test_branch_value_visible_after_join(backend):
+    @zse.kernel
+    def branch_join(out: "int32_tensor", flag: int):
+        if flag:
+            chosen = 1
+        else:
+            chosen = 2
+        out[0] = chosen
+
+    source = branch_join.source(backend)
+    assert source.index("int chosen;") < source.index("if (")
+    assert "chosen = 1;" in source
+    assert "chosen = 2;" in source
+
+
+@pytest.mark.parametrize("backend", ["cuda", "rocm", "metal"])
+def test_reject_possibly_unassigned_branch_value(backend):
+    @zse.kernel
+    def incomplete_branch(out: "int32_tensor", flag: int):
+        if flag:
+            chosen = 1
+        out[0] = chosen
+
+    with pytest.raises(ValueError, match="chosen.*before assignment"):
+        incomplete_branch.source(backend)
+
+
+@pytest.mark.parametrize("backend", ["cuda", "rocm", "metal"])
+def test_scalar_promotions(backend):
+    @zse.kernel
+    def promotions(small: "uint16_tensor", halves: "half_tensor", out: "fp32_tensor", flag: int):
+        narrow = small[0]
+        widened = narrow + 65536
+        value = halves[0]
+        total = value + halves[1]
+        out[flag] = total + widened
+
+    source = promotions.source(backend)
+    assert "int widened = " in source
+    assert "float value = " in source
+    assert "float total = " in source
+
+
+@pytest.mark.parametrize("backend", ["cuda", "rocm"])
+def test_scalar_parameter_reassignment(backend):
+    @zse.kernel
+    def parameter_update(out: "int32_tensor", flag: int):
+        flag = flag + 1
+        out[0] = flag
+
+    source = parameter_update.source(backend)
+    assert "int flag = " not in source
+    assert "flag = (flag + 1);" in source
+
+
+@pytest.mark.parametrize("backend", ["cuda", "rocm", "metal"])
+def test_nested_branch_and_early_return(backend):
+    @zse.kernel
+    def nested(out: "fp32_tensor", flag: int):
+        if flag < 0:
+            return
+        else:
+            if flag > 1:
+                value = 1.5
+            else:
+                value = 2
+        total = 0.0
+        for position in range(4):
+            total += value
+        out[0] = total
+
+    source = nested.source(backend)
+    assert source.index("float value;") < source.index("if (")
+    assert source.count("float total") == 1
+    assert "float value = " not in source
+
+
+@pytest.mark.parametrize("backend", ["cuda", "rocm", "metal"])
+def test_reject_value_from_zero_iteration_loop(backend):
+    @zse.kernel
+    def loop_value(out: "int32_tensor", count: int):
+        for position in range(count):
+            value = position
+        out[0] = value
+
+    with pytest.raises(ValueError, match="value.*before assignment"):
+        loop_value.source(backend)
+
+
+@pytest.mark.parametrize("backend", ["cuda", "rocm", "metal"])
+def test_branch_pointer_preserves_backend_type(backend):
+    @zse.kernel
+    def pointer_branch(words: "uint8_tensor", out: "uint32_tensor", flag: int):
+        if flag:
+            pointer = zse.reinterpret(words, zse.uint32)
+        else:
+            pointer = zse.reinterpret(words, zse.uint32)
+        out[0] = pointer[0]
+
+    source = pointer_branch.source(backend)
+    declaration = "device uint* pointer;" if backend == "metal" else "unsigned int* pointer;"
+    assert source.index(declaration) < source.index("if (")
+
+
+@pytest.mark.parametrize("backend", ["cuda", "rocm", "metal"])
+def test_reject_branch_local_array_escape(backend):
+    @zse.kernel
+    def array_branch(out: "int32_tensor", flag: int):
+        if flag:
+            scratch = zse.local_array(4, zse.int32)
+            scratch[0] = 1
+        else:
+            scratch = zse.local_array(4, zse.int32)
+            scratch[0] = 2
+        out[0] = scratch[0]
+
+    with pytest.raises(ValueError, match="scratch.*before assignment"):
+        array_branch.source(backend)
+
+
+@pytest.mark.parametrize("backend", ["cuda", "rocm", "metal"])
+def test_promoted_variable_propagates_to_dependents(backend):
+    @zse.kernel
+    def promotion_chain(out: "fp32_tensor", count: int):
+        value = 0
+        for position in range(count):
+            copied = value
+            result = copied + 1
+            out[position] = result
+            value = 1.5
+
+    source = promotion_chain.source(backend)
+    assert "float value = " in source
+    assert "float copied = " in source
+    assert "float result = " in source
+
+
+def test_generated_scalar_cuda_syntax():
+    import shutil
+    import subprocess
+
+    compiler = shutil.which("clang++")
+    if compiler is None:
+        pytest.skip("clang++ unavailable for generated scalar-source syntax check")
+
+    @zse.kernel
+    def scalar_syntax(words: "uint32_tensor", indices: "int32_tensor", out: "uint32_tensor", flag: int):
+        position = indices[0]
+        packed = words[position]
+        if flag:
+            chosen = packed >> 4
+        else:
+            chosen = packed & 15
+        for first in range(4):
+            temporary = chosen + first
+            out[first] = temporary
+        for second in range(4):
+            temporary = chosen + second
+            out[second] = temporary
+
+    source = scalar_syntax.source("cuda").replace("__global__ ", "")
+    result = subprocess.run(
+        [compiler, "-x", "c++", "-std=c++17", "-fsyntax-only", "-"],
+        input=source, text=True, capture_output=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("backend", ["cuda", "rocm", "metal"])
+def test_sibling_loops_have_independent_types(backend):
+    @zse.kernel
+    def independent(words: "uint32_tensor", values: "fp32_tensor", out: "fp32_tensor"):
+        for first in range(4):
+            temporary = words[first]
+            shifted = temporary >> 4
+            out[first] = shifted
+        for second in range(4):
+            temporary = values[second]
+            out[second] = temporary
+
+    source = independent.source(backend)
+    unsigned_type = "uint" if backend == "metal" else "unsigned int"
+    assert f"{unsigned_type} temporary = words[first];" in source
+    assert f"{unsigned_type} shifted = " in source
+    assert "float temporary = values[second];" in source
+
+
+@pytest.mark.parametrize("backend", ["cuda", "rocm", "metal"])
+def test_shared_integer_load_inside_loop(backend):
+    @zse.kernel
+    def shared_loop(out: "uint32_tensor"):
+        scratch = zse.shared_memory((4,), zse.uint32)
+        scratch[0] = 255
+        for position in range(1):
+            packed = scratch[position]
+            shifted = packed >> 4
+            out[position] = shifted
+
+    source = shared_loop.source(backend)
+    unsigned_type = "uint" if backend == "metal" else "unsigned int"
+    assert f"{unsigned_type} packed = scratch[position];" in source
+    assert f"{unsigned_type} shifted = " in source

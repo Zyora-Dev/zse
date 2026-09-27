@@ -60,7 +60,7 @@ WEIGHT_SPLIT_MAP = {
 NON_LAYER_SPLIT_MAP = {
     "embed_tokens.weight": REPLICATED,
     "model.norm.weight": REPLICATED,
-    "lm_head.weight": COLUMN_PARALLEL,
+    "lm_head.weight": REPLICATED,
 }
 
 

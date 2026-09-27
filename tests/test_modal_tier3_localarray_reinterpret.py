@@ -15,6 +15,12 @@ Compares GPU output against Python reference. Run:
 
 import modal
 import sys
+import builtins
+import functools
+import json
+from pathlib import Path
+
+print = functools.partial(builtins.print, flush=True)
 
 app = modal.App("zse-tier3-localarray-reinterpret-gpu")
 
@@ -24,8 +30,7 @@ zse_image = (
 )
 
 
-@app.function(gpu="A100", image=zse_image, timeout=300)
-def test_tier3_on_gpu():
+def _test_original_primitives():
     sys.path.insert(0, "/root/zse-compiler")
     import struct
     import zse_compiler as zse
@@ -135,7 +140,213 @@ def test_tier3_on_gpu():
     return {"failures": fail, "n": N}
 
 
+def _scope_kernels():
+    import zse_compiler as zse
+
+    @zse.kernel
+    def typed_branch(words: "uint32_tensor", indices: "int32_tensor",
+                     out: "uint32_tensor", count: int):
+        position = zse.global_id(0)
+        if position >= count:
+            return
+        index = indices[position]
+        packed = words[index]
+        shifted = packed >> 4
+        masked = packed & 15
+        selected = shifted if position % 2 else masked
+        if position % 2:
+            pointer = zse.reinterpret(words, zse.uint32)
+        else:
+            pointer = zse.reinterpret(out, zse.uint32)
+        if position % 2:
+            chosen = pointer[index] >> 8
+        else:
+            chosen = packed & 255
+        out[position] = selected + chosen
+
+    @zse.kernel
+    def sibling_scopes(words: "uint32_tensor", values: "fp32_tensor",
+                       out: "fp32_tensor", count: int):
+        if zse.global_id(0) != 0:
+            return
+        for first in range(count):
+            temporary = words[first]
+            shifted = temporary >> 24
+            out[first] = shifted
+        for second in range(count):
+            temporary = values[second]
+            out[count + second] = temporary
+        position = 0
+        while position < count:
+            temporary = values[position] + 0.5
+            out[2 * count + position] = temporary
+            position += 1
+
+    @zse.kernel
+    def shared_local(words: "uint32_tensor", out: "uint32_tensor", count: int):
+        position = zse.global_id(0)
+        lane = zse.thread_id(0)
+        scratch = zse.shared_memory((64,), zse.uint32)
+        scratch[lane] = 0
+        if position < count:
+            scratch[lane] = words[position]
+        zse.syncthreads()
+        if position >= count:
+            return
+        unpacked = zse.local_array(8, zse.int32)
+        packed = scratch[lane]
+        zse.unpack_uint4(packed, unpacked, 0)
+        total = 0
+        for nibble in range(8):
+            value = unpacked[nibble]
+            total += value
+        for iteration in range(1):
+            value = scratch[lane]
+            shifted = value >> 4
+            out[position] = shifted + total
+
+    @zse.kernel
+    def promotions(small: "uint16_tensor", halves: "half_tensor",
+                   out: "fp32_tensor", count: int):
+        position = zse.global_id(0)
+        if position >= count:
+            return
+        narrow = small[position]
+        widened = narrow + narrow
+        value = halves[position]
+        total = value + 0.25
+        out[position] = total
+        out[count + position] = widened
+
+    @zse.kernel
+    def control_flow(out: "fp32_tensor", flag: int):
+        if zse.global_id(0) != 0:
+            return
+        if flag < 0:
+            return
+        else:
+            if flag > 1:
+                value = 1.5
+            else:
+                value = 2
+        total = 0.0
+        for position in range(4):
+            total += value
+        out[0] = total
+        carried = 0
+        for position in range(flag):
+            copied = carried
+            result = copied + 1
+            out[position + 1] = result
+            carried = 1.5
+        flag = flag + 1
+        out[5] = flag
+
+    return {
+        "typed_branch": typed_branch,
+        "sibling_scopes": sibling_scopes,
+        "shared_local": shared_local,
+        "promotions": promotions,
+        "control_flow": control_flow,
+    }
+
+
+def _test_type_scope():
+    import hashlib
+    import random
+    import struct
+    import zse_compiler as zse
+
+    memory = zse.GPUMemory(backend="cuda")
+    allocations = []
+    cases = []
+    source_hashes = {}
+    kernels = _scope_kernels()
+
+    def upload(values, code, dtype):
+        buffer = memory.allocate((len(values),), dtype)
+        allocations.append(buffer)
+        memory.copy_host_to_device(struct.pack(f"<{len(values)}{code}", *values), buffer)
+        return buffer
+
+    def check(name, arguments, expected, code, dtype, grid, block, label=None):
+        sentinel = 123 if code == "I" else -123.0
+        initial = [sentinel] * (len(expected) + 8)
+        output = upload(initial, code, dtype)
+        kernel = kernels[name]
+        source = kernel.source("cuda")
+        source_hashes[name] = hashlib.sha256(source.encode()).hexdigest()
+        kernel.compile("cuda")
+        kernel.launch(grid=grid, block=block,
+                      args=(*arguments[:-1], output, arguments[-1]), backend="cuda")
+        actual = list(struct.unpack(f"<{len(initial)}{code}", memory.copy_device_to_host(output)))
+        reference = expected + [sentinel] * 8
+        failures = [index for index, (got, want) in enumerate(zip(actual, reference)) if got != want]
+        print(f"[VERIFY] {label or name}: {len(actual)} values, {len(failures)} mismatches")
+        assert not failures, [(index, actual[index], reference[index]) for index in failures[:8]]
+        cases.append({"case": label or name, "checked_values": len(actual), "mismatches": 0})
+
+    try:
+        generator = random.Random(20260927)
+        count = 257
+        words = [0, 0xFFFFFFFF, 0x80000001, 0xDEADBEEF, 0x01000001]
+        words += [generator.getrandbits(32) for unused in range(count - len(words))]
+        indices = list(reversed(range(count)))
+        values = [position * 0.25 - 32 for position in range(count)]
+        word_buffer = upload(words, "I", zse.uint32)
+        index_buffer = upload(indices, "i", zse.int32)
+        value_buffer = upload(values, "f", zse.float32)
+        expected = [(words[index] >> 4) + (words[index] >> 8) if position % 2
+                    else (words[index] & 15) + (words[index] & 255)
+                    for position, index in enumerate(indices)]
+        check("typed_branch", (word_buffer, index_buffer, count), expected,
+              "I", zse.uint32, (5,), (64,))
+        check("sibling_scopes", (word_buffer, value_buffer, count),
+              [word >> 24 for word in words] + values + [value + 0.5 for value in values],
+              "f", zse.float32, (1,), (64,))
+        check("shared_local", (word_buffer, count),
+              [(word >> 4) + sum((word >> (4 * nibble)) & 15 for nibble in range(8)) for word in words],
+              "I", zse.uint32, (5,), (64,))
+        small = [65535 if position % 2 else 32768 for position in range(count)]
+        halves = [2048.0 if position % 2 else -2048.0 for position in range(count)]
+        check("promotions", (upload(small, "H", zse.uint16), upload(halves, "e", zse.float16), count),
+              [value + 0.25 for value in halves] + [value * 2 for value in small],
+              "f", zse.float32, (5,), (64,))
+        for flag in (-1, 0, 1, 3):
+            expected = [-123.0] * 6
+            if flag >= 0:
+                expected[0] = 6.0 if flag > 1 else 8.0
+                for position in range(flag):
+                    expected[position + 1] = 1.0 if position == 0 else 2.5
+                expected[5] = flag + 1
+            check("control_flow", (flag,), expected, "f", zse.float32,
+                  (1,), (64,), label=f"control_flow_flag_{flag}")
+        return {"cases": cases, "source_sha256": source_hashes}
+    finally:
+        for allocation in reversed(allocations):
+            memory.free(allocation)
+
+
+@app.function(gpu="A100", image=zse_image, timeout=300)
+def test_tier3_on_gpu():
+    import traceback
+    sys.path.insert(0, "/root/zse-compiler")
+    try:
+        original = _test_original_primitives()
+        regression = _test_type_scope()
+        import zse_compiler as zse
+        result = {"gpu": zse.get_devices("cuda")[0].name,
+                  "original": original, "regression": regression}
+        print("RESULT " + json.dumps(result, sort_keys=True))
+        return result
+    except Exception:
+        traceback.print_exc()
+        raise
+
+
 @app.local_entrypoint()
 def main():
     result = test_tier3_on_gpu.remote()
-    print(f"\nModal result: {result}")
+    output = Path(__file__).with_name("modal_tier3_gpu_revalidation.json")
+    output.write_text(json.dumps(result, indent=2) + "\n")
+    print(f"\nModal result saved to {output}: {result}")

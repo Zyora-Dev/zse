@@ -62,6 +62,11 @@ class ROCmCodegen(BaseCodegen):
         self._mfma_counter = 0
         return super().generate(func)
 
+    def _map_type(self, dtype: str) -> str:
+        if dtype in DTYPE_MAP:
+            return DTYPE_MAP[dtype].hip_type
+        return super()._map_type(dtype)
+
     def _emit_header(self) -> str:
         return '#include <hip/hip_runtime.h>\n\nextern "C" {'
 

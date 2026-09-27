@@ -14,6 +14,7 @@ Run: modal run tests/test_modal_tp.py
 
 import sys
 import modal
+import modal.experimental
 
 app = modal.App("zse-tp-test")
 
@@ -371,8 +372,289 @@ def test_tp():
 
 
 @app.local_entrypoint()
-def main():
-    results = test_tp.remote()
+def main(full_inference: bool = False, sustained_load: bool = False, multi_node: bool = False):
+    if multi_node:
+        import json
+        import secrets
+        from pathlib import Path
+        run_id = secrets.token_hex(8)
+        result = test_multi_node.remote(secrets.token_bytes(32), run_id)
+        path = Path(__file__).with_name("modal_tp_multi_node.json")
+        path.write_text(json.dumps(result, indent=2) + "\n")
+        print(f"Saved {path}", flush=True)
+        if not result.get("passed"):
+            raise RuntimeError(result.get("error", "Cross-host TP validation failed"))
+        return
+    results = test_full_inference.remote(sustained_load) if full_inference or sustained_load else test_tp.remote()
+    if full_inference or sustained_load:
+        import json
+        from pathlib import Path
+        result_name = "modal_tp_sustained_load.json" if sustained_load else "modal_tp_full_inference.json"
+        Path(__file__).with_name(result_name).write_text(
+            json.dumps(results, indent=2) + "\n"
+        )
     print("\n📊 Results received from Modal:")
     for k, v in results.items():
         print(f"  {k}: {v}")
+    if (full_inference or sustained_load) and not results["passed"]:
+        raise RuntimeError(results.get("error", "Full TP inference validation failed"))
+
+
+@app.function(
+    gpu="A100-80GB:2",
+    image=zse_image,
+    timeout=900,
+    volumes={"/root/zse_cache": zse_cache, "/root/hf_cache": hf_cache},
+)
+def test_full_inference(sustained_load: bool = False):
+    import os
+    import sys
+    import time
+    import traceback
+    from pathlib import Path
+
+    sys.path[:0] = ["/root/zse-compiler", "/root/zse-engine"]
+    os.environ["NCCL_DEBUG"] = "INFO"
+    results = {"passed": False, "tp_size": 2, "requests": []}
+    engine = None
+    try:
+        from zse_engine.orchestrator.tp_engine import TPEngine
+
+        candidates = list(Path("/root/zse_cache").glob(
+            "*a09a35458c702b33eeacc393d103063234e8bc28_int4_rowmajor.zse"
+        ))
+        assert len(candidates) == 1, f"Expected corrected Qwen7B artifact, found {candidates}"
+        results["model_path"] = str(candidates[0])
+        print(f"Full TP inference model: {candidates[0]}", flush=True)
+        started = time.monotonic()
+        engine = TPEngine(str(candidates[0]), tp_size=2, quiet=False)
+        results["init_seconds"] = time.monotonic() - started
+        results["worker_pids"] = [worker.pid for worker in engine._workers]
+        assert len(set(results["worker_pids"])) == 2
+        for question, expected in (
+            ("What is the capital of France? Answer briefly.", "paris"),
+            ("What is the capital of Japan? Answer briefly.", "tokyo"),
+        ):
+            prompt = f"<|im_start|>user\n{question}<|im_end|>\n<|im_start|>assistant\n"
+            before = engine._total_tokens
+            text = engine.generate(prompt, max_tokens=32, temperature=0.0)
+            tokens = engine._total_tokens - before
+            results["requests"].append({"question": question, "text": text, "tokens": tokens})
+            print(f"TP generated {tokens} tokens: {text!r}", flush=True)
+            assert tokens > 1, "Decode was not exercised"
+            assert expected in text.lower(), f"Incorrect model answer: {text!r}"
+            assert tokens < 32, "Brief answer did not terminate at EOS"
+        assert all(worker.is_alive() for worker in engine._workers)
+        if sustained_load:
+            results["load"] = run_sustained_load(engine)
+        results["passed"] = True
+    except Exception as error:
+        results["error"] = str(error)
+        results["traceback"] = traceback.format_exc()
+        traceback.print_exc()
+    finally:
+        if engine is not None:
+            workers = list(engine._workers)
+            engine.destroy()
+            results["workers_stopped"] = all(not worker.is_alive() for worker in workers)
+            results["passed"] = results["passed"] and results["workers_stopped"]
+    print(f"Full TP results: {results}", flush=True)
+    return results
+
+
+def run_sustained_load(engine, vram_reader=None):
+    import csv
+    import io
+    import statistics
+    import subprocess
+    import time
+
+    def device_memory():
+        if vram_reader is not None:
+            return vram_reader()
+        output = subprocess.check_output([
+            "nvidia-smi", "--query-gpu=uuid,memory.used",
+            "--format=csv,noheader,nounits",
+        ], text=True, timeout=15)
+        return {row[0].strip(): int(row[1]) for row in csv.reader(io.StringIO(output))}
+
+    prompts = [
+        ("What is the capital of France? Answer briefly.", "paris"),
+        ("What is the capital of Japan? Answer briefly.", "tokyo"),
+        (("This is background text for a repeated-request test. " * 64)
+         + "What is the capital of France? Answer briefly.", "paris"),
+        (("This is background text for a repeated-request test. " * 128)
+         + "What is the capital of Japan? Answer briefly.", "tokyo"),
+    ]
+    baseline = {}
+    latencies = []
+    completed = 0
+    cancelled = 0
+    streamed = 0
+    memory_start = None
+    started = time.monotonic()
+    while completed < 100 or time.monotonic() - started < 300:
+        if time.monotonic() - started > 600:
+            raise RuntimeError("Sustained workload exceeded its 600-second bound")
+        prompt_index = completed % len(prompts)
+        question, expected = prompts[prompt_index]
+        prompt = f"<|im_start|>user\n{question}<|im_end|>\n<|im_start|>assistant\n"
+        request_start = time.monotonic()
+        if completed % 5 == 4:
+            stream = engine.stream_generate(prompt, max_tokens=48, temperature=0.0)
+            try:
+                assert next(stream), "Cancelled stream returned no first token"
+            finally:
+                stream.close()
+            cancelled += 1
+        else:
+            if completed % 5 == 3:
+                pieces = list(engine.stream_generate(prompt, max_tokens=48, temperature=0.0))
+                assert 1 < len(pieces) < 47, "Stream did not decode and terminate early"
+                text = "".join(pieces)
+                streamed += 1
+            else:
+                before = engine._total_tokens
+                text = engine.generate(prompt, max_tokens=48, temperature=0.0)
+                assert 1 < engine._total_tokens - before < 48, "Generation did not terminate early"
+            assert expected in text.lower(), f"Incorrect sustained answer: {text!r}"
+            assert "<|" not in text, f"Special token leaked: {text!r}"
+            if prompt_index not in baseline:
+                baseline[prompt_index] = text
+            assert text == baseline[prompt_index], "Greedy answer changed across repeated requests"
+        latencies.append(time.monotonic() - request_start)
+        assert set(engine._last_release_stats) == {0, 1}
+        for cache in engine._last_release_stats.values():
+            assert cache["num_sequences"] == 0, f"Live sequence leaked: {cache}"
+            assert cache["allocated_blocks"] == 0, f"KV blocks leaked: {cache}"
+            assert cache["free_blocks"] == cache["total_blocks"], f"KV capacity not restored: {cache}"
+        assert all(worker.is_alive() for worker in engine._workers), "Worker exited during load"
+        completed += 1
+        if completed == 20:
+            memory_start = device_memory()
+        if completed % 20 == 0:
+            print(f"TP load: {completed} requests, {time.monotonic() - started:.1f}s, cache reclaimed on both ranks", flush=True)
+    memory_end = device_memory()
+    assert memory_start is not None and len(memory_start) == (1 if vram_reader is not None else 2)
+    assert memory_start.keys() == memory_end.keys()
+    growth = {device: memory_end[device] - memory_start[device] for device in memory_start}
+    assert max(growth.values()) <= 128, f"Post-warmup VRAM growth exceeds 128 MiB: {growth}"
+    return {
+        "passed": True,
+        "duration_seconds": time.monotonic() - started,
+        "requests": completed,
+        "cancelled_streams": cancelled,
+        "completed_streams": streamed,
+        "concurrency": 1,
+        "minimum_requests": 100,
+        "minimum_duration_seconds": 300,
+        "latency_p50_seconds": statistics.median(latencies),
+        "latency_p95_seconds": sorted(latencies)[int(0.95 * (len(latencies) - 1))],
+        "answer_samples": baseline,
+        "post_warmup_vram_mib": memory_start,
+        "final_vram_mib": memory_end,
+        "vram_growth_mib": growth,
+        "final_cache": engine._last_release_stats,
+    }
+
+
+@app.function(
+    image=zse_image,
+    gpu="A100-80GB:8",
+    timeout=900,
+    retries=0,
+    volumes={"/root/zse_cache": zse_cache, "/root/hf_cache": hf_cache},
+)
+@modal.experimental.clustered(size=2)
+def test_multi_node(authkey: bytes, run_id: str):
+    import hashlib
+    import json
+    import os
+    import socket
+    import subprocess
+    import time
+    import traceback
+    from pathlib import Path
+    from modal.experimental import get_cluster_info
+
+    sys.path[:0] = ["/root/zse-compiler", "/root/zse-engine"]
+    from zse_engine.orchestrator.tp_engine import TPEngine
+    from zse_engine.orchestrator.tp_transport import TPRemoteEndpoint, serve_tp_worker
+
+    cluster = get_cluster_info()
+    rank = cluster.rank
+    addresses = list(cluster.container_ips)
+    result = {"passed": False, "run_id": run_id, "node_rank": rank,
+              "cluster_id": cluster.cluster_id, "node_addresses": addresses,
+              "allocated_gpus": 16, "active_inference_gpus": 2, "tp_size": 2}
+    engine = None
+    workers = []
+    os.environ["NCCL_DEBUG"] = "INFO"
+    os.environ["NCCL_SOCKET_FAMILY"] = "AF_INET6"
+    os.environ["NCCL_SOCKET_IFNAME"] = "eth0"
+
+    def gpu_snapshot():
+        output = subprocess.check_output([
+            "nvidia-smi", "--query-gpu=uuid,name,memory.used", "--format=csv,noheader,nounits",
+        ], text=True, timeout=15)
+        return [{"uuid": fields[0].strip(), "name": fields[1].strip(), "used_mib": int(fields[2])}
+                for line in output.strip().splitlines() for fields in [line.split(",")]]
+
+    try:
+        assert len(addresses) == 2 and len(set(addresses)) == 2, addresses
+        gpus = gpu_snapshot()
+        assert len(gpus) == 8 and all("A100" in gpu["name"] for gpu in gpus), gpus
+        candidates = list(Path("/root/zse_cache").glob(
+            "*a09a35458c702b33eeacc393d103063234e8bc28_int4_rowmajor.zse"
+        ))
+        assert len(candidates) == 1, f"Expected corrected Qwen7B artifact, found {candidates}"
+        model_path = candidates[0]
+        digest = hashlib.sha256()
+        with model_path.open("rb") as source:
+            for chunk in iter(lambda: source.read(8 * 1024 * 1024), b""):
+                digest.update(chunk)
+        node = {"hostname": socket.gethostname(), "address": addresses[rank], "gpus": gpus,
+                "model_sha256": digest.hexdigest(), "model_bytes": model_path.stat().st_size}
+        result["node"] = node
+        endpoint = TPRemoteEndpoint(addresses[1], 29571, authkey)
+        print(f"Node {rank} ready: {node['hostname']}, eight A100 GPUs, model {node['model_sha256']}", flush=True)
+        if rank == 1:
+            result.update(serve_tp_worker(endpoint, str(model_path), 1, 2, local_rank=0,
+                                          timeout=840, node_metadata=node))
+            result["passed"] = True
+        else:
+            engine = TPEngine(str(model_path), tp_size=2, quiet=True,
+                              remote_endpoints=[endpoint])
+            workers = list(engine._workers)
+            follower = engine._ready_info[1]["node"]
+            assert follower["model_sha256"] == node["model_sha256"], "Model files differ between nodes"
+            assert follower["hostname"] != node["hostname"], "Node hostnames are identical"
+            assert not ({gpu["uuid"] for gpu in gpus} & {gpu["uuid"] for gpu in follower["gpus"]})
+            assert engine._ready_info[0]["local_rank"] == engine._ready_info[1]["local_rank"] == 0
+            result["rank_readiness"] = engine._ready_info
+
+            def active_vram():
+                snapshot = gpu_snapshot()[0]
+                return {snapshot["uuid"]: snapshot["used_mib"]}
+
+            result["sustained_load"] = run_sustained_load(engine, vram_reader=active_vram)
+            result["vram_scope"] = "leader active GPU only; follower logical KV reclamation checked per request"
+            result["passed"] = True
+    except Exception as error:
+        result["error"] = f"{type(error).__name__}: {error}"
+        result["traceback"] = traceback.format_exc()
+        traceback.print_exc()
+    finally:
+        if engine is not None:
+            engine.destroy()
+            result["worker_exitcodes"] = [worker.exitcode for worker in workers]
+            result["workers_stopped"] = all(not worker.is_alive() and worker.exitcode == 0 for worker in workers)
+            if not result["workers_stopped"]:
+                result["passed"] = False
+                result.setdefault("error", "Missing clean local/remote worker shutdown")
+        result["finished_at"] = time.time()
+        path = Path(f"/root/zse_cache/tp_multi_node_{run_id}_rank{rank}.json")
+        path.write_text(json.dumps(result, indent=2) + "\n")
+        zse_cache.commit()
+        print(json.dumps(result, indent=2), flush=True)
+    return result

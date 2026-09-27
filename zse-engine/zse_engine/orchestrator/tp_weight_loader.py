@@ -1,9 +1,9 @@
 """ZSE TP Weight Loader — Load sharded weights for tensor parallelism.
 
 Each GPU rank loads only its shard of each weight matrix:
-- Column parallel (QKV, Gate, Up, LM Head): slice rows [rank*N/tp : (rank+1)*N/tp]
+- Column parallel (QKV, Gate, Up): slice rows [rank*N/tp : (rank+1)*N/tp]
 - Row parallel (O, Down): slice columns [rank*K/tp : (rank+1)*K/tp]
-- Replicated (norms, embedding): full copy
+- Replicated (norms, embedding, LM head): full copy for full-vocabulary logits
 
 For INT4 quantized weights, column-parallel slicing is straightforward (rows are
 independent). Row-parallel slicing requires splitting the packed K dimension and

@@ -30,7 +30,7 @@ from zse_compiler.ir.nodes import (
     IRLocalArrayDecl,
     IRReinterpret,
 )
-from zse_compiler.ir.type_inference import infer_types
+from zse_compiler.ir.type_inference import infer_types, validate_assignments
 
 
 class BaseCodegen:
@@ -45,7 +45,8 @@ class BaseCodegen:
 
     def generate(self, func: IRFunction) -> str:
         """Generate complete source code for a kernel function."""
-        self._local_vars = set()
+        validate_assignments(func)
+        self._local_vars = {param.name for param in func.params}
         self._shared_mem_counter = 0
         self._needs_block_reduce_smem = False
         self._var_types = infer_types(func)
@@ -96,8 +97,10 @@ class BaseCodegen:
         elif isinstance(node, IRBarrier):
             return self._emit_barrier()
         elif isinstance(node, IRSharedMemDecl):
+            self._local_vars.add(node.name)
             return self._emit_shared_mem_decl(node)
         elif isinstance(node, IRDynamicSharedMemDecl):
+            self._local_vars.add(node.name)
             return self._emit_dynamic_shared_mem_decl(node)
         elif isinstance(node, IRAtomicAdd):
             return self._emit_atomic_add(node)
@@ -291,44 +294,84 @@ class BaseCodegen:
 
     def _emit_if(self, node: IRIf) -> str:
         cond = self._emit_expr(node.condition)
-        lines = [f"if ({cond}) {{"]
+        lines = []
+        for name in self._branch_assignments(node):
+            if name not in self._local_vars:
+                dtype = self._var_types[name]
+                if dtype.startswith("ptr:"):
+                    element = {"int": "int32", "uint": "uint32", "float": "float32"}.get(dtype[4:], dtype[4:])
+                    declaration = self._reinterpret_lhs_type(element)
+                else:
+                    declaration = self._map_type(dtype)
+                lines.append(f"{declaration} {name};")
+                self._local_vars.add(name)
+        outer_vars = set(self._local_vars)
+        lines.append(f"if ({cond}) {{")
         self._indent += 1
         for s in node.then_body:
             lines.append(self._indented(self._emit_node(s)))
         self._indent -= 1
+        self._local_vars = set(outer_vars)
         if node.else_body:
             lines.append(self._indented("} else {", -0))
             self._indent += 1
             for s in node.else_body:
                 lines.append(self._indented(self._emit_node(s)))
             self._indent -= 1
+        self._local_vars = outer_vars
         lines.append(self._indented("}", -0))
         return "\n".join(lines)
+
+    def _branch_assignments(self, node):
+        names = {}
+        for stmt in node.then_body + node.else_body:
+            if isinstance(stmt, IRAssign):
+                names[stmt.name] = None
+            elif isinstance(stmt, IRIf) and not stmt.is_ternary:
+                names.update(dict.fromkeys(self._branch_assignments(stmt)))
+        return names
 
     def _emit_for(self, node: IRFor) -> str:
         start = self._emit_expr(node.start)
         stop = self._emit_expr(node.stop)
         step = self._emit_expr(node.step)
         var = node.var
+        outer_vars = set(self._local_vars)
         self._local_vars.add(var)
+        outer_types = self._var_types
+        self._var_types = self._loop_types(node.body, {var: "int"})
 
-        lines = [f"for (int {var} = {start}; {var} < {stop}; {var} += {step}) {{"]
+        declaration = "" if var in outer_vars else "int "
+        lines = [f"for ({declaration}{var} = {start}; {var} < {stop}; {var} += {step}) {{"]
         self._indent += 1
         for s in node.body:
             lines.append(self._indented(self._emit_node(s)))
         self._indent -= 1
+        self._local_vars = outer_vars
+        self._var_types = outer_types
         lines.append(self._indented("}", -0))
         return "\n".join(lines)
 
     def _emit_while(self, node: IRWhile) -> str:
         cond = self._emit_expr(node.condition)
+        outer_vars = set(self._local_vars)
+        outer_types = self._var_types
+        self._var_types = self._loop_types(node.body)
         lines = [f"while ({cond}) {{"]
         self._indent += 1
         for s in node.body:
             lines.append(self._indented(self._emit_node(s)))
         self._indent -= 1
+        self._local_vars = outer_vars
+        self._var_types = outer_types
         lines.append(self._indented("}", -0))
         return "\n".join(lines)
+
+    def _loop_types(self, body, extra=None):
+        types = {name: self._var_types[name] for name in self._local_vars if name in self._var_types}
+        types.update(extra or {})
+        params = [IRParam(name=name, dtype=dtype) for name, dtype in types.items()]
+        return infer_types(IRFunction(name="", params=params, body=body))
 
     def _emit_return(self, node: IRReturn) -> str:
         if node.value:

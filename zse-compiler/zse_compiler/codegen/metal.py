@@ -46,6 +46,13 @@ SIMD_WIDTH = 32  # Apple GPU SIMD width
 class MetalCodegen(BaseCodegen):
     """Generates Metal Shading Language kernel source code from ZSE IR."""
 
+    def _map_type(self, dtype: str) -> str:
+        if dtype == "uint":
+            return "uint"
+        if dtype in DTYPE_MAP:
+            return DTYPE_MAP[dtype].metal_type
+        return super()._map_type(dtype)
+
     def _emit_header(self) -> str:
         return (
             "#include <metal_stdlib>\n"

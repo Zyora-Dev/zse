@@ -23,6 +23,7 @@ import os
 import time
 import struct
 import multiprocessing
+from contextlib import contextmanager
 from multiprocessing import Process, Queue, Value, Array
 from typing import Optional, List, Iterator
 from dataclasses import dataclass
@@ -71,6 +72,7 @@ def _worker_process(
     cmd_queue: multiprocessing.Queue,
     result_queue: multiprocessing.Queue,
     quiet: bool,
+    local_rank: Optional[int] = None,
 ):
     """Worker process for one GPU rank.
 
@@ -82,11 +84,12 @@ def _worker_process(
         signal.signal(signal.SIGINT, signal.SIG_IGN)  # Let main handle Ctrl+C
 
         # Step 1: Init GPU for this rank
-        gpu_mem = GPUMemory(backend=backend, device_index=rank)
+        device_index = rank if local_rank is None else local_rank
+        gpu_mem = GPUMemory(backend=backend, device_index=device_index)
         gpu_mem.ensure_context()
 
         devices = get_devices(backend)
-        device = devices[rank] if rank < len(devices) else devices[0]
+        device = devices[device_index]
         if not quiet:
             print(f"[TP rank {rank}] GPU: {device.name} ({device.vram_total_gb:.1f}GB)")
 
@@ -168,6 +171,9 @@ def _worker_process(
 
         # Signal ready
         result_queue.put(("ready", rank, {
+            "rank": rank,
+            "local_rank": device_index,
+            "pid": os.getpid(),
             "device": device.name,
             "vram_gb": device.vram_total_gb,
             "weight_mb": weights.total_bytes / 1024**2,
@@ -206,8 +212,15 @@ def _worker_process(
                         result_queue.put(("logits", logits))
 
             elif cmd_type == CMD_STOP:
-                # Cancel current generation
-                pass
+                _, seq_id = cmd
+                kv_cache.free_sequence(seq_id)
+                cache_stats = kv_cache.stats()
+                result_queue.put(("released", rank, seq_id, {
+                    "num_sequences": cache_stats.num_sequences,
+                    "allocated_blocks": cache_stats.allocated_blocks,
+                    "free_blocks": cache_stats.free_blocks,
+                    "total_blocks": cache_stats.total_blocks,
+                }))
 
         # Cleanup
         tp_group.destroy()
@@ -237,7 +250,13 @@ class TPEngine:
         model_path: str,
         tp_size: int = 2,
         quiet: bool = False,
+        remote_endpoints=None,
     ):
+        remote_endpoints = list(remote_endpoints or [])
+        if remote_endpoints and len(remote_endpoints) != tp_size - 1:
+            raise ValueError("Cross-host TP requires one local rank and tp_size - 1 remote endpoints")
+        if len({(endpoint.host, endpoint.port) for endpoint in remote_endpoints}) != len(remote_endpoints):
+            raise ValueError("Remote TP endpoints must be unique")
         self._model_path = model_path
         self._tp_size = tp_size
         self._quiet = quiet
@@ -252,9 +271,10 @@ class TPEngine:
         self._backend = backend
         devices = get_devices(backend)
 
-        if len(devices) < tp_size:
+        local_size = 1 if remote_endpoints else tp_size
+        if len(devices) < local_size:
             raise RuntimeError(
-                f"Requested tp_size={tp_size} but only {len(devices)} GPUs detected"
+                f"Requested {local_size} local GPUs but only {len(devices)} GPUs detected"
             )
 
         if not is_nccl_available(backend):
@@ -263,7 +283,7 @@ class TPEngine:
 
         if not quiet:
             print(f"[ZSE-TP] Initializing {tp_size}-way tensor parallelism on {backend}")
-            for i in range(tp_size):
+            for i in range(local_size):
                 print(f"  GPU {i}: {devices[i].name} ({devices[i].vram_total_gb:.1f}GB)")
 
         # Generate NCCL unique ID
@@ -285,30 +305,43 @@ class TPEngine:
 
         # Spawn worker processes
         self._cmd_queues = []
-        self._result_queue = multiprocessing.Queue()
+        worker_context = multiprocessing.get_context("spawn")
+        self._result_queue = worker_context.Queue()
         self._workers = []
 
-        for rank in range(tp_size):
-            cmd_q = multiprocessing.Queue()
-            self._cmd_queues.append(cmd_q)
-
-            p = Process(
-                target=_worker_process,
-                args=(rank, tp_size, model_path, backend, nccl_uid,
-                      cmd_q, self._result_queue, quiet),
-                daemon=True,
-            )
-            p.start()
-            self._workers.append(p)
-
-        # Wait for all workers to be ready
         ready_info = {}
-        for _ in range(tp_size):
-            msg = self._result_queue.get(timeout=300)  # 5 min timeout
-            if msg[0] == "error":
-                raise RuntimeError(f"Worker rank {msg[1]} failed: {msg[2]}")
-            assert msg[0] == "ready"
-            ready_info[msg[1]] = msg[2]
+        try:
+            for rank in range(tp_size):
+                if remote_endpoints and rank > 0:
+                    from zse_engine.orchestrator.tp_transport import RemoteTPWorker
+                    remote_worker = RemoteTPWorker(
+                        remote_endpoints[rank - 1], rank, tp_size, backend,
+                        nccl_uid, self._result_queue,
+                    )
+                    self._cmd_queues.append(remote_worker)
+                    self._workers.append(remote_worker)
+                    continue
+                cmd_q = worker_context.Queue()
+                self._cmd_queues.append(cmd_q)
+                worker = worker_context.Process(
+                    target=_worker_process,
+                    args=(rank, tp_size, model_path, backend, nccl_uid,
+                          cmd_q, self._result_queue, quiet),
+                    daemon=True,
+                )
+                worker.start()
+                self._workers.append(worker)
+
+            for _ in range(tp_size):
+                msg = self._result_queue.get(timeout=300)
+                if (len(msg) != 3 or msg[0] != "ready"
+                        or msg[1] not in range(tp_size) or msg[1] in ready_info):
+                    raise RuntimeError(f"Worker initialization failed: {msg}")
+                ready_info[msg[1]] = msg[2]
+        except BaseException:
+            self.destroy()
+            raise
+        self._ready_info = ready_info
 
         self._total_init_time = time.monotonic() - init_start
         self._sampler = Sampler()
@@ -326,6 +359,43 @@ class TPEngine:
         for q in self._cmd_queues:
             q.put(cmd)
 
+    def _default_stop_tokens(self):
+        stop_tokens = set()
+        eos_id = self._tokenizer.special_tokens.eos_id
+        if eos_id is not None:
+            stop_tokens.add(eos_id)
+        for marker in ("<|im_end|>", "<|im_start|>", "<|eot_id|>"):
+            token_ids = self._tokenizer.encode(marker, add_bos=False)
+            if len(token_ids) == 1:
+                stop_tokens.add(token_ids[0])
+        return stop_tokens
+
+    def _release_sequence(self, seq_id):
+        self._broadcast_cmd((CMD_STOP, seq_id))
+        released = {}
+        for _ in range(self._tp_size):
+            message = self._result_queue.get(timeout=30)
+            if (message[0] != "released" or message[2] != seq_id
+                    or message[1] not in range(self._tp_size) or message[1] in released):
+                raise RuntimeError(f"Sequence release failed: {message}")
+            released[message[1]] = message[3]
+        self._last_release_stats = released
+
+    @contextmanager
+    def _request_sequence(self):
+        seq_id = self._seq_counter
+        self._seq_counter += 1
+        try:
+            yield seq_id
+        except BaseException:
+            try:
+                self._release_sequence(seq_id)
+            except Exception:
+                pass
+            raise
+        else:
+            self._release_sequence(seq_id)
+
     def generate(
         self,
         prompt: str,
@@ -336,10 +406,14 @@ class TPEngine:
         stop_tokens: Optional[List[int]] = None,
     ) -> str:
         """Generate text from prompt using tensor parallelism."""
+        with self._request_sequence() as seq_id:
+            return self._generate(
+                prompt, max_tokens, temperature, top_k, top_p, stop_tokens, seq_id,
+            )
+
+    def _generate(self, prompt, max_tokens, temperature, top_k, top_p, stop_tokens, seq_id):
         # Tokenize
         token_ids = self._tokenizer.encode(prompt)
-        seq_id = self._seq_counter
-        self._seq_counter += 1
 
         gen_start = time.monotonic()
 
@@ -358,16 +432,13 @@ class TPEngine:
             temperature=temperature, top_k=top_k, top_p=top_p,
         )
 
+        stop_ids = self._default_stop_tokens() | set(stop_tokens or [])
         generated = [next_token]
         position = len(token_ids)
 
         # Decode loop
-        if stop_tokens is None:
-            stop_tokens = []
-        eos = self._config.eos_token_id if hasattr(self._config, 'eos_token_id') else 2
-
         for step in range(max_tokens - 1):
-            if next_token in stop_tokens or next_token == eos:
+            if next_token in stop_ids:
                 break
 
             # Use GPU argmax for greedy (temperature ~0)
@@ -396,7 +467,7 @@ class TPEngine:
         self._total_gen_time += gen_time
 
         # Decode tokens to text
-        return self._tokenizer.decode(generated)
+        return self._tokenizer.decode([token for token in generated if token not in stop_ids])
 
     def stream_generate(
         self,
@@ -406,9 +477,11 @@ class TPEngine:
         top_k: int = 50,
     ) -> Iterator[str]:
         """Stream-generate tokens one at a time."""
+        with self._request_sequence() as seq_id:
+            yield from self._stream_generate(prompt, max_tokens, temperature, top_k, seq_id)
+
+    def _stream_generate(self, prompt, max_tokens, temperature, top_k, seq_id):
         token_ids = self._tokenizer.encode(prompt)
-        seq_id = self._seq_counter
-        self._seq_counter += 1
 
         # Prefill
         self._broadcast_cmd((CMD_PREFILL, token_ids, seq_id))
@@ -420,24 +493,25 @@ class TPEngine:
             msg[1], self._config.vocab_size,
             temperature=temperature, top_k=top_k,
         )
+        stop_ids = self._default_stop_tokens()
+        if next_token in stop_ids:
+            return
         yield self._tokenizer.decode([next_token])
 
         position = len(token_ids)
-        eos = self._config.eos_token_id if hasattr(self._config, 'eos_token_id') else 2
 
         for _ in range(max_tokens - 1):
-            if next_token == eos:
-                break
-
             self._broadcast_cmd((CMD_DECODE, next_token, seq_id, position, False))
             msg = self._result_queue.get(timeout=30)
             if msg[0] == "error":
-                break
+                raise RuntimeError(f"Stream decode failed: {msg}")
 
             next_token = self._sampler.sample(
                 msg[1], self._config.vocab_size,
                 temperature=temperature, top_k=top_k,
             )
+            if next_token in stop_ids:
+                break
             yield self._tokenizer.decode([next_token])
             position += 1
 
@@ -461,6 +535,7 @@ class TPEngine:
             p.join(timeout=10)
             if p.is_alive():
                 p.terminate()
+                p.join(timeout=5)
 
         self._workers.clear()
         self._cmd_queues.clear()

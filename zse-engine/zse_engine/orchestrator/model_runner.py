@@ -369,19 +369,18 @@ class ModelRunner:
             final_norm_w, seq_len,
         )
 
-        # LM head: [seq_len, hidden] @ [vocab, hidden]^T → [seq_len, vocab]
         lm_head = self._weights.get("lm_head.weight")
+        last_hidden = self._make_tensor_from_ptr(
+            self._scratch.norm_out.data_ptr + (seq_len - 1) * self._hidden_size * 2,
+            (1, self._hidden_size),
+        )
         self._launch_matmul(
-            self._scratch.logits, self._scratch.norm_out, lm_head,
-            seq_len, self._config.vocab_size, self._hidden_size,
+            self._scratch.logits, last_hidden, lm_head,
+            1, self._config.vocab_size, self._hidden_size,
         )
 
-        # Download logits for last token only
-        # Offset to last row: (seq_len - 1) * vocab_size * 2 bytes
-        last_logits_bytes = self._config.vocab_size * 2  # fp16
         logits_data = self._download_fp16(
             self._scratch.logits, self._config.vocab_size,
-            row_offset=seq_len - 1,
         )
 
         self._gpu_mem.free(token_tensor)
@@ -2811,37 +2810,25 @@ class TPModelRunner(ModelRunner):
         )
 
         # Prefill attention (local heads)
-        if self._kernels.has_kernel("prefill_attention"):
-            self._kernels.launch(
-                "prefill_attention",
-                (seq_len, self._num_heads),
-                (min(256, self._head_dim),),
-                self._scratch.attn_out, self._scratch.qkv, self._scratch.attn_out,
-                self._scratch.mlp_out,
-                seq_len, self._num_heads, self._num_kv_heads, self._head_dim,
-                self._scale,
-            )
-        else:
-            # Fallback to paged attention
-            total_tokens = meta.seq_lengths[0] if meta.seq_lengths else seq_len
-            shared_mem = total_tokens * 4
-            self._kernels.launch(
-                "paged_attention",
-                (seq_len, self._num_heads),
-                (min(256, self._head_dim),),
-                self._scratch.attn_out, self._scratch.qkv, kv_slab,
-                block_table_tensor, seq_lens_tensor,
-                self._num_heads, self._num_kv_heads, self._head_dim,
-                self._kv_cache.block_size,
-                meta.max_blocks_per_seq, self._num_layers, layer,
-                self._scale,
-                shared_mem_bytes=shared_mem,
-            )
+        attn_output = self._scratch.norm_out
+        shared_mem = seq_len * 4
+        if shared_mem > 48 * 1024:
+            raise ValueError("TP prefill attention exceeds 48KB shared memory")
+        self._kernels.launch(
+            "prefill_attention",
+            (seq_len, self._num_heads),
+            (min(256, self._head_dim),),
+            attn_output, self._scratch.qkv, self._scratch.attn_out,
+            self._scratch.mlp_out,
+            seq_len, self._num_heads, self._num_kv_heads, self._head_dim,
+            self._scale,
+            shared_mem_bytes=shared_mem,
+        )
 
         # O projection — row parallel
         o_proj = self._get_layer_weight(f"model.layers.{layer}.self_attn.o_proj.weight")
         self._launch_matmul(
-            self._scratch.hidden, self._scratch.attn_out, o_proj,
+            self._scratch.hidden, attn_output, o_proj,
             seq_len, self._hidden_size, q_dim,
         )
 

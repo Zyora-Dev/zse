@@ -128,7 +128,7 @@ def get_unique_id(backend: str = "cuda") -> bytes:
     status = lib.ncclGetUniqueId(ctypes.byref(uid))
     if status != 0:
         raise RuntimeError(f"ncclGetUniqueId failed with status {status}")
-    return bytes(uid.internal)
+    return bytes(uid)
 
 
 def comm_init_all(ndev: int, backend: str = "cuda"):
@@ -205,8 +205,9 @@ class NcclCommunicator:
             )
 
         # Reconstruct NcclUniqueId from bytes
-        uid = NcclUniqueId()
-        ctypes.memmove(uid.internal, unique_id, NCCL_UNIQUE_ID_BYTES)
+        if len(unique_id) != NCCL_UNIQUE_ID_BYTES:
+            raise ValueError(f"NCCL unique ID must contain {NCCL_UNIQUE_ID_BYTES} bytes")
+        uid = NcclUniqueId.from_buffer_copy(unique_id)
 
         # ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueId id, int rank)
         self._comm = ctypes.c_void_p()
