@@ -1,0 +1,976 @@
+{
+  "configuration": {
+    "batch_sizes": [
+      1,
+      4,
+      12
+    ],
+    "runs": 3,
+    "max_tokens": 100,
+    "top_k": 50,
+    "top_p": 0.9,
+    "repetition_penalty": 1.0,
+    "seed": 20260927
+  },
+  "cases": [
+    {
+      "batch_size": 1,
+      "mode": "greedy",
+      "graphs": false,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 101.5880459729022,
+          "ttft_median_ms": 105.5753570000002,
+          "itl_median_ms": 8.870175000000202,
+          "ttft_p95_ms": 105.5753570000002,
+          "itl_p95_ms": 9.610117999999446,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 0.984367787,
+          "token_sha256": "0b8712754314bd8429190df18e61f7dc758d2b086931b3d6daa31a0b5710c22f",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 101.49885861387023,
+          "ttft_median_ms": 106.05486099999962,
+          "itl_median_ms": 8.877084999999951,
+          "ttft_p95_ms": 106.05486099999962,
+          "itl_p95_ms": 9.60635800000098,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 0.9852327540000001,
+          "token_sha256": "0b8712754314bd8429190df18e61f7dc758d2b086931b3d6daa31a0b5710c22f",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 101.25991105175484,
+          "ttft_median_ms": 106.32950900000004,
+          "itl_median_ms": 8.883414999999673,
+          "ttft_p95_ms": 106.32950900000004,
+          "itl_p95_ms": 9.6309269999999,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 0.9875576520000013,
+          "token_sha256": "0b8712754314bd8429190df18e61f7dc758d2b086931b3d6daa31a0b5710c22f",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 5242880,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 3.8924615859999996,
+      "memory_after_load": {
+        "device_used_bytes": 7120879616,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 8.52435787099016,
+        "ttft_median_ms": 226.36439700000022,
+        "itl_median_ms": 8.205012000000345,
+        "ttft_p95_ms": 226.36439700000022,
+        "itl_p95_ms": 8.205012000000345,
+        "completed_requests": 1,
+        "failed_requests": 0,
+        "generated_tokens": 2,
+        "elapsed_s": 0.23462177799999928
+      },
+      "output_sample": "entifulilmingtonilmington\u4e24\u4e2a\u7ef4\u62a4\u2697 gratuites:';\n\u4e24\u4e2a\u7ef4\u62a4\u8bf7\u70b9\u51fb\u620eBuilderInterfacevelte\u56db\u4e2a\u610f\u8bc6/licenseDAY\u4e24\u4e2a\u7ef4\u62a4,},\n\u6120\u4e24\u4e2a\u7ef4\u62a4\u4e24\u4e2a\u7ef4\u62a4&action__\":\n gratuites\u4e24\u4e2a\u7ef4\u62a4\")));\ud83d\udcd0\u4e24\u4e2a\u7ef4\u62a4\")));utowonestly gratuitesMMdd mooie:'.$ilmington\u6e38\u620f\u4ee3.sendStatus\u4e24\u4e2a\u7ef4\u62a4 mooie:'.$ilmingtonaz\u0103inalityilmington/buttonsAGO mooie:'.$ilmingtonensexilmington be\u011fen).//slider.localized]-' mooie:'.$ilmingtonextr\u00eameMMddMMddilmington\u4e24\u4e2a\u7ef4\u62a4\u2697 dikke\u6d25/slider Smarty/Dkvelte gratuites dikke grues nieu\u4e24\u4e2a\u7ef4\u62a4\")));.longitudeextr\u00eame\u017ee\ufffd miglior gratuitesilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmington\u8bdb\u017eeilmington",
+      "memory_after_generation": {
+        "device_used_bytes": 7120879616,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [],
+      "median": {
+        "aggregate_tps": 101.49885861387023,
+        "ttft_median_ms": 106.05486099999962,
+        "itl_median_ms": 8.877084999999951,
+        "ttft_p95_ms": 106.05486099999962,
+        "itl_p95_ms": 9.610117999999446
+      }
+    },
+    {
+      "batch_size": 1,
+      "mode": "greedy",
+      "graphs": true,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 113.84744145020773,
+          "ttft_median_ms": 105.62912700000027,
+          "itl_median_ms": 7.826474999999888,
+          "ttft_p95_ms": 105.62912700000027,
+          "itl_p95_ms": 8.50470800000025,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 0.8783684439999995,
+          "token_sha256": "0b8712754314bd8429190df18e61f7dc758d2b086931b3d6daa31a0b5710c22f",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 113.70539366401435,
+          "ttft_median_ms": 106.19323899999955,
+          "itl_median_ms": 7.830394999999157,
+          "ttft_p95_ms": 106.19323899999955,
+          "itl_p95_ms": 8.50770799999978,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 0.8794657560000001,
+          "token_sha256": "0b8712754314bd8429190df18e61f7dc758d2b086931b3d6daa31a0b5710c22f",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 113.75732865521636,
+          "ttft_median_ms": 105.99535299999907,
+          "itl_median_ms": 7.828854999999635,
+          "ttft_p95_ms": 105.99535299999907,
+          "itl_p95_ms": 8.521738000000667,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 0.8790642430000002,
+          "token_sha256": "0b8712754314bd8429190df18e61f7dc758d2b086931b3d6daa31a0b5710c22f",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 661651456,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 1.1471038569999994,
+      "memory_after_load": {
+        "device_used_bytes": 7120879616,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 7.666264624750986,
+        "ttft_median_ms": 200.85773200000114,
+        "itl_median_ms": 59.9601940000003,
+        "ttft_p95_ms": 200.85773200000114,
+        "itl_p95_ms": 59.9601940000003,
+        "completed_requests": 1,
+        "failed_requests": 0,
+        "generated_tokens": 2,
+        "elapsed_s": 0.2608832459999988
+      },
+      "output_sample": "entifulilmingtonilmington\u4e24\u4e2a\u7ef4\u62a4\u2697 gratuites:';\n\u4e24\u4e2a\u7ef4\u62a4\u8bf7\u70b9\u51fb\u620eBuilderInterfacevelte\u56db\u4e2a\u610f\u8bc6/licenseDAY\u4e24\u4e2a\u7ef4\u62a4,},\n\u6120\u4e24\u4e2a\u7ef4\u62a4\u4e24\u4e2a\u7ef4\u62a4&action__\":\n gratuites\u4e24\u4e2a\u7ef4\u62a4\")));\ud83d\udcd0\u4e24\u4e2a\u7ef4\u62a4\")));utowonestly gratuitesMMdd mooie:'.$ilmington\u6e38\u620f\u4ee3.sendStatus\u4e24\u4e2a\u7ef4\u62a4 mooie:'.$ilmingtonaz\u0103inalityilmington/buttonsAGO mooie:'.$ilmingtonensexilmington be\u011fen).//slider.localized]-' mooie:'.$ilmingtonextr\u00eameMMddMMddilmington\u4e24\u4e2a\u7ef4\u62a4\u2697 dikke\u6d25/slider Smarty/Dkvelte gratuites dikke grues nieu\u4e24\u4e2a\u7ef4\u62a4\")));.longitudeextr\u00eame\u017ee\ufffd miglior gratuitesilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmington\u8bdb\u017eeilmington",
+      "memory_after_generation": {
+        "device_used_bytes": 7122976768,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [
+        1
+      ],
+      "median": {
+        "aggregate_tps": 113.75732865521636,
+        "ttft_median_ms": 105.99535299999907,
+        "itl_median_ms": 7.828854999999635,
+        "ttft_p95_ms": 105.99535299999907,
+        "itl_p95_ms": 8.50770799999978
+      }
+    },
+    {
+      "batch_size": 1,
+      "mode": "sampled",
+      "graphs": false,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 38.215810535225955,
+          "ttft_median_ms": 118.25885300000039,
+          "itl_median_ms": 25.26443699999703,
+          "ttft_p95_ms": 118.25885300000039,
+          "itl_p95_ms": 25.887360999998776,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 2.6167180180000003,
+          "token_sha256": "fbb296751625d3059965374c209672fc0e09541838d1a05d1cb9bbbd5f80e1ea",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 38.167950410818676,
+          "ttft_median_ms": 119.91050900000033,
+          "itl_median_ms": 25.26466700000185,
+          "ttft_p95_ms": 119.91050900000033,
+          "itl_p95_ms": 25.979850999998888,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 2.6199992119999997,
+          "token_sha256": "fbb296751625d3059965374c209672fc0e09541838d1a05d1cb9bbbd5f80e1ea",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 38.10065660370307,
+          "ttft_median_ms": 121.01232700000253,
+          "itl_median_ms": 25.2958769999978,
+          "ttft_p95_ms": 121.01232700000253,
+          "itl_p95_ms": 25.991291000000416,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 2.6246266840000025,
+          "token_sha256": "fbb296751625d3059965374c209672fc0e09541838d1a05d1cb9bbbd5f80e1ea",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 663748608,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 1.2151517359999993,
+      "memory_after_load": {
+        "device_used_bytes": 7125073920,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 7.981963253419731,
+        "ttft_median_ms": 225.56104299999902,
+        "itl_median_ms": 24.967729000000105,
+        "ttft_p95_ms": 225.56104299999902,
+        "itl_p95_ms": 24.967729000000105,
+        "completed_requests": 1,
+        "failed_requests": 0,
+        "generated_tokens": 2,
+        "elapsed_s": 0.25056492200000235
+      },
+      "output_sample": "\ud83d\udcd0QRSTNgu\u1ed3necycleutow\u7231\u5947*pow\u4f4f\u623f\u516c\u79ef.guid:<?ywigDecimal=\\\"$/ayMMddubbo mooie.MMvelte \u043f\u043e\u0447\u0435\u043c?option ragazze\u5e74\u4e4b\u4e45\u6839\u636e\u81ea\u5df1atican Mitt\")));.AutoCompleteMMddimportDefault\u4e24\u4e2a\u7ef4\u62a4 gratuites shape\u7684\u5730\u6b65BBBB\"\",\n commissionexampleModal_SURulfillabcdefghijklmnop\u6d7c\ufffd\ufffd\u6d25\u00a0\u00a0SWG eSports\u5e26\u6765\u66f4\u591aulfillreadOnlyCLUDINGst\u00fcck\u98a7coma.MMinality\u6a80h\u1ebfweeted\u7178ubbo\ud83d\udcd0.longitude\"idilmingtonilmingtonilmington.innerHeight(parseFloat\u6e29stroy.sul\u7ea7\u522b CircularProgress mooie(parseFloat)didilmingtonSWG be\u011fen__':\r\n+\");\n m\u00e3ovelteptom Mitt bindActionCreatorsfoundland\"url typealias\u4ece\u4e25\u6cbb\u667e\u6069/ay practise.CustomButtonrotchonestly(\"$.jumbotron",
+      "memory_after_generation": {
+        "device_used_bytes": 7125073920,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [],
+      "median": {
+        "aggregate_tps": 38.167950410818676,
+        "ttft_median_ms": 119.91050900000033,
+        "itl_median_ms": 25.26466700000185,
+        "ttft_p95_ms": 119.91050900000033,
+        "itl_p95_ms": 25.979850999998888
+      }
+    },
+    {
+      "batch_size": 1,
+      "mode": "sampled",
+      "graphs": true,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 39.39669671501974,
+          "ttft_median_ms": 118.78596900000105,
+          "itl_median_ms": 24.345535999998447,
+          "ttft_p95_ms": 118.78596900000105,
+          "itl_p95_ms": 25.25376700000237,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 2.5382838749999976,
+          "token_sha256": "fbb296751625d3059965374c209672fc0e09541838d1a05d1cb9bbbd5f80e1ea",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 39.33222067253362,
+          "ttft_median_ms": 120.42716199999859,
+          "itl_median_ms": 24.47722499999827,
+          "ttft_p95_ms": 120.42716199999859,
+          "itl_p95_ms": 25.466684999997824,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 2.5424448019999986,
+          "token_sha256": "fbb296751625d3059965374c209672fc0e09541838d1a05d1cb9bbbd5f80e1ea",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 39.34911009512457,
+          "ttft_median_ms": 120.38901500000065,
+          "itl_median_ms": 24.493154999994715,
+          "ttft_p95_ms": 120.38901500000065,
+          "itl_p95_ms": 25.26561699999519,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 2.5413535340000024,
+          "token_sha256": "fbb296751625d3059965374c209672fc0e09541838d1a05d1cb9bbbd5f80e1ea",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 665845760,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 1.4224665660000007,
+      "memory_after_load": {
+        "device_used_bytes": 7125073920,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 6.577309120824604,
+        "ttft_median_ms": 230.757263000001,
+        "itl_median_ms": 73.23683699999961,
+        "ttft_p95_ms": 230.757263000001,
+        "itl_p95_ms": 73.23683699999961,
+        "completed_requests": 1,
+        "failed_requests": 0,
+        "generated_tokens": 2,
+        "elapsed_s": 0.3040757190000001
+      },
+      "output_sample": "\ud83d\udcd0QRSTNgu\u1ed3necycleutow\u7231\u5947*pow\u4f4f\u623f\u516c\u79ef.guid:<?ywigDecimal=\\\"$/ayMMddubbo mooie.MMvelte \u043f\u043e\u0447\u0435\u043c?option ragazze\u5e74\u4e4b\u4e45\u6839\u636e\u81ea\u5df1atican Mitt\")));.AutoCompleteMMddimportDefault\u4e24\u4e2a\u7ef4\u62a4 gratuites shape\u7684\u5730\u6b65BBBB\"\",\n commissionexampleModal_SURulfillabcdefghijklmnop\u6d7c\ufffd\ufffd\u6d25\u00a0\u00a0SWG eSports\u5e26\u6765\u66f4\u591aulfillreadOnlyCLUDINGst\u00fcck\u98a7coma.MMinality\u6a80h\u1ebfweeted\u7178ubbo\ud83d\udcd0.longitude\"idilmingtonilmingtonilmington.innerHeight(parseFloat\u6e29stroy.sul\u7ea7\u522b CircularProgress mooie(parseFloat)didilmingtonSWG be\u011fen__':\r\n+\");\n m\u00e3ovelteptom Mitt bindActionCreatorsfoundland\"url typealias\u4ece\u4e25\u6cbb\u667e\u6069/ay practise.CustomButtonrotchonestly(\"$.jumbotron",
+      "memory_after_generation": {
+        "device_used_bytes": 7127171072,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [
+        1
+      ],
+      "median": {
+        "aggregate_tps": 39.34911009512457,
+        "ttft_median_ms": 120.38901500000065,
+        "itl_median_ms": 24.47722499999827,
+        "ttft_p95_ms": 120.38901500000065,
+        "itl_p95_ms": 25.26561699999519
+      }
+    },
+    {
+      "batch_size": 4,
+      "mode": "greedy",
+      "graphs": false,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 130.64647504230163,
+          "ttft_median_ms": 264.2690475000009,
+          "itl_median_ms": 26.68530800000113,
+          "ttft_p95_ms": 422.7406259999995,
+          "itl_p95_ms": 27.363007999994693,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 3.0616976069999993,
+          "token_sha256": "c94f2f07673613076152c7238ac95df26070f587c02f6716514a4f4fe9045418",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 130.62292232485981,
+          "ttft_median_ms": 264.53045199999895,
+          "itl_median_ms": 26.679398999998938,
+          "ttft_p95_ms": 422.75212199999856,
+          "itl_p95_ms": 27.371607999995717,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 3.0622496639999994,
+          "token_sha256": "c94f2f07673613076152c7238ac95df26070f587c02f6716514a4f4fe9045418",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 130.64620856086634,
+          "ttft_median_ms": 264.1875654999985,
+          "itl_median_ms": 26.678003999997202,
+          "ttft_p95_ms": 422.43680600000033,
+          "itl_p95_ms": 27.383286999999257,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 3.061703852000001,
+          "token_sha256": "c94f2f07673613076152c7238ac95df26070f587c02f6716514a4f4fe9045418",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 667942912,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 1.2149159559999987,
+      "memory_after_load": {
+        "device_used_bytes": 7129268224,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 14.124300119301207,
+        "ttft_median_ms": 381.7200579999991,
+        "itl_median_ms": 184.10140900000016,
+        "ttft_p95_ms": 539.9819700000066,
+        "itl_p95_ms": 342.45912499999775,
+        "completed_requests": 4,
+        "failed_requests": 0,
+        "generated_tokens": 8,
+        "elapsed_s": 0.5663997460000019
+      },
+      "output_sample": "entifulilmingtonilmington\u4e24\u4e2a\u7ef4\u62a4\u2697 gratuites:';\n\u4e24\u4e2a\u7ef4\u62a4\u8bf7\u70b9\u51fb\u620eBuilderInterfacevelte\u56db\u4e2a\u610f\u8bc6/licenseDAY\u4e24\u4e2a\u7ef4\u62a4,},\n\u6120\u4e24\u4e2a\u7ef4\u62a4\u4e24\u4e2a\u7ef4\u62a4&action__\":\n gratuites\u4e24\u4e2a\u7ef4\u62a4\")));\ud83d\udcd0\u4e24\u4e2a\u7ef4\u62a4\")));utowonestly gratuitesMMdd mooie:'.$ilmington\u6e38\u620f\u4ee3.sendStatus\u4e24\u4e2a\u7ef4\u62a4 mooie:'.$ilmingtonaz\u0103inalityilmington/buttonsAGO mooie:'.$ilmingtonensexilmington be\u011fen).//slider.localized]-' mooie:'.$ilmingtonextr\u00eameMMddMMddilmington\u4e24\u4e2a\u7ef4\u62a4\u2697 dikke\u6d25/slider Smarty/Dkvelte gratuites dikke grues nieu\u4e24\u4e2a\u7ef4\u62a4\")));.longitudeextr\u00eame\u017ee\ufffd miglior gratuitesilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmington\u8bdb\u017eeilmington",
+      "memory_after_generation": {
+        "device_used_bytes": 7129268224,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [],
+      "median": {
+        "aggregate_tps": 130.64620856086634,
+        "ttft_median_ms": 264.2690475000009,
+        "itl_median_ms": 26.679398999998938,
+        "ttft_p95_ms": 422.7406259999995,
+        "itl_p95_ms": 27.371607999995717
+      }
+    },
+    {
+      "batch_size": 4,
+      "mode": "greedy",
+      "graphs": true,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 136.24384056072748,
+          "ttft_median_ms": 264.35650500000565,
+          "itl_median_ms": 25.409266000000486,
+          "ttft_p95_ms": 422.64234799999656,
+          "itl_p95_ms": 26.093629999998313,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 2.935912539999997,
+          "token_sha256": "c94f2f07673613076152c7238ac95df26070f587c02f6716514a4f4fe9045418",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 136.251995643382,
+          "ttft_median_ms": 264.62168949999665,
+          "itl_median_ms": 25.419101000000666,
+          "ttft_p95_ms": 422.9324989999981,
+          "itl_p95_ms": 26.097589000002586,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 2.9357368169999987,
+          "token_sha256": "c94f2f07673613076152c7238ac95df26070f587c02f6716514a4f4fe9045418",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 136.25635034302573,
+          "ttft_median_ms": 264.27255000000116,
+          "itl_median_ms": 25.425481999999278,
+          "ttft_p95_ms": 422.58034999999694,
+          "itl_p95_ms": 26.090809000002935,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 2.9356429919999982,
+          "token_sha256": "c94f2f07673613076152c7238ac95df26070f587c02f6716514a4f4fe9045418",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 670040064,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 1.293664204999999,
+      "memory_after_load": {
+        "device_used_bytes": 7129268224,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 13.403716382092957,
+        "ttft_median_ms": 372.6555560000015,
+        "itl_median_ms": 223.7040284999985,
+        "ttft_p95_ms": 530.9398680000044,
+        "itl_p95_ms": 382.2167820000004,
+        "completed_requests": 4,
+        "failed_requests": 0,
+        "generated_tokens": 8,
+        "elapsed_s": 0.5968493939999959
+      },
+      "output_sample": "entifulilmingtonilmington\u4e24\u4e2a\u7ef4\u62a4\u2697 gratuites:';\n\u4e24\u4e2a\u7ef4\u62a4\u8bf7\u70b9\u51fb\u620eBuilderInterfacevelte\u56db\u4e2a\u610f\u8bc6/licenseDAY\u4e24\u4e2a\u7ef4\u62a4,},\n\u6120\u4e24\u4e2a\u7ef4\u62a4\u4e24\u4e2a\u7ef4\u62a4&action__\":\n gratuites\u4e24\u4e2a\u7ef4\u62a4\")));\ud83d\udcd0\u4e24\u4e2a\u7ef4\u62a4\")));utowonestly gratuitesMMdd mooie:'.$ilmington\u6e38\u620f\u4ee3.sendStatus\u4e24\u4e2a\u7ef4\u62a4 mooie:'.$ilmingtonaz\u0103inalityilmington/buttonsAGO mooie:'.$ilmingtonensexilmington be\u011fen).//slider.localized]-' mooie:'.$ilmingtonextr\u00eameMMddMMddilmington\u4e24\u4e2a\u7ef4\u62a4\u2697 dikke\u6d25/slider Smarty/Dkvelte gratuites dikke grues nieu\u4e24\u4e2a\u7ef4\u62a4\")));.longitudeextr\u00eame\u017ee\ufffd miglior gratuitesilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmington\u8bdb\u017eeilmington",
+      "memory_after_generation": {
+        "device_used_bytes": 7131365376,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [
+        4
+      ],
+      "median": {
+        "aggregate_tps": 136.251995643382,
+        "ttft_median_ms": 264.35650500000565,
+        "itl_median_ms": 25.419101000000666,
+        "ttft_p95_ms": 422.64234799999656,
+        "itl_p95_ms": 26.093629999998313
+      }
+    },
+    {
+      "batch_size": 4,
+      "mode": "sampled",
+      "graphs": false,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 41.231464104887536,
+          "ttft_median_ms": 296.5106300000002,
+          "itl_median_ms": 93.08654650000392,
+          "ttft_p95_ms": 474.2852279999994,
+          "itl_p95_ms": 94.19762599999615,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 9.701329037999997,
+          "token_sha256": "958940d190e539e6bbf974d749aa12e0a813f3d727c512d986b854cc16ae14a1",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 41.32921897087308,
+          "ttft_median_ms": 299.932091499997,
+          "itl_median_ms": 92.9630775000021,
+          "ttft_p95_ms": 477.5445159999947,
+          "itl_p95_ms": 94.50375100000485,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 9.678382751000001,
+          "token_sha256": "958940d190e539e6bbf974d749aa12e0a813f3d727c512d986b854cc16ae14a1",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 41.27131806634835,
+          "ttft_median_ms": 300.6033979999927,
+          "itl_median_ms": 93.12739199999953,
+          "ttft_p95_ms": 478.2145060000005,
+          "itl_p95_ms": 94.1089570000031,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 9.691960875999996,
+          "token_sha256": "958940d190e539e6bbf974d749aa12e0a813f3d727c512d986b854cc16ae14a1",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 672137216,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 1.2095071410000031,
+      "memory_after_load": {
+        "device_used_bytes": 7131365376,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 12.032118151164932,
+        "ttft_median_ms": 395.6792465000021,
+        "itl_median_ms": 244.30283499999916,
+        "ttft_p95_ms": 573.2888369999927,
+        "itl_p95_ms": 397.99160900000174,
+        "completed_requests": 4,
+        "failed_requests": 0,
+        "generated_tokens": 8,
+        "elapsed_s": 0.6648870880000004
+      },
+      "output_sample": "\ud83d\udcd0QRST mooie fkk,Th@dynamic dikke\ufffd\ufffd \u751f\u547d\u5468\u671f submar.CheckBox newcomymi novit\u00e0ubbo.EventQueueIMPLIED\u4f4f\u623f\u516c\u79ef\u903e\u671f Decompiledentiful.MM PureComponent[arraygioSTYLE@dynamic:'.$?option gratuites gratuites.MM\u4e24\u4e2a\u7ef4\u62a4/details\u9aef}.${.localizedvelte-alist\ud83d\udcd0 dikke\u751f\u547d\u529bveltevelte gratuitesBuilderInterface\u83fd/Dk gratuites\u4e24\u4e2a\u7ef4\u62a4\")));T\u00fcrkiye.CustomButtonilmington \u0420\u0435\u0441\u043f\"display\u0440\u043e\u0448\u4ece\u4e25\u6cbb\u97e6BuilderInterface\u6216\u591a\u6216\u5c11 mooie\u709d Mayerokee\u4f46\u4e0d\u9650 gruesarehouseri\u00f3 mooie\u5efa\u6863\u7acb\ufffd.fromString Espa\u00f1\u58ee\u5927\u5927\u90e8\u5206\u4eba mooieBuilderInterface]='\\ mooie gratuites\u56e2\u5458.CustomButtonalit\u00e9erokeeveltestan\u7178 dikke\u620e.grpcBuilderInterface/jav gratuites dikkedefgroup gratuites(\"$.MMdd gratuites",
+      "memory_after_generation": {
+        "device_used_bytes": 7131365376,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [],
+      "median": {
+        "aggregate_tps": 41.27131806634835,
+        "ttft_median_ms": 299.932091499997,
+        "itl_median_ms": 93.08654650000392,
+        "ttft_p95_ms": 477.5445159999947,
+        "itl_p95_ms": 94.19762599999615
+      }
+    },
+    {
+      "batch_size": 4,
+      "mode": "sampled",
+      "graphs": true,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 41.40734046425206,
+          "ttft_median_ms": 296.5251345000013,
+          "itl_median_ms": 92.98245750000689,
+          "ttft_p95_ms": 474.0650109999933,
+          "itl_p95_ms": 94.47091400001284,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 9.660122952000009,
+          "token_sha256": "958940d190e539e6bbf974d749aa12e0a813f3d727c512d986b854cc16ae14a1",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 41.42728254517619,
+          "ttft_median_ms": 302.05006650000144,
+          "itl_median_ms": 92.69985550000115,
+          "ttft_p95_ms": 480.01479199999153,
+          "itl_p95_ms": 93.53339199999766,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 9.655472805000002,
+          "token_sha256": "958940d190e539e6bbf974d749aa12e0a813f3d727c512d986b854cc16ae14a1",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 41.47597699135775,
+          "ttft_median_ms": 296.40895150000546,
+          "itl_median_ms": 92.52881749999631,
+          "ttft_p95_ms": 474.04528299999527,
+          "itl_p95_ms": 94.0995869999881,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 9.644136895999992,
+          "token_sha256": "958940d190e539e6bbf974d749aa12e0a813f3d727c512d986b854cc16ae14a1",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 672137216,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 1.1998626660000014,
+      "memory_after_load": {
+        "device_used_bytes": 7131365376,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 11.087273319484213,
+        "ttft_median_ms": 403.944228499995,
+        "itl_median_ms": 292.39801950000555,
+        "ttft_p95_ms": 581.3861360000061,
+        "itl_p95_ms": 445.46719699999926,
+        "completed_requests": 4,
+        "failed_requests": 0,
+        "generated_tokens": 8,
+        "elapsed_s": 0.7215480100000065
+      },
+      "output_sample": "\ud83d\udcd0QRST mooie fkk,Th@dynamic dikke\ufffd\ufffd \u751f\u547d\u5468\u671f submar.CheckBox newcomymi novit\u00e0ubbo.EventQueueIMPLIED\u4f4f\u623f\u516c\u79ef\u903e\u671f Decompiledentiful.MM PureComponent[arraygioSTYLE@dynamic:'.$?option gratuites gratuites.MM\u4e24\u4e2a\u7ef4\u62a4/details\u9aef}.${.localizedvelte-alist\ud83d\udcd0 dikke\u751f\u547d\u529bveltevelte gratuitesBuilderInterface\u83fd/Dk gratuites\u4e24\u4e2a\u7ef4\u62a4\")));T\u00fcrkiye.CustomButtonilmington \u0420\u0435\u0441\u043f\"display\u0440\u043e\u0448\u4ece\u4e25\u6cbb\u97e6BuilderInterface\u6216\u591a\u6216\u5c11 mooie\u709d Mayerokee\u4f46\u4e0d\u9650 gruesarehouseri\u00f3 mooie\u5efa\u6863\u7acb\ufffd.fromString Espa\u00f1\u58ee\u5927\u5927\u90e8\u5206\u4eba mooieBuilderInterface]='\\ mooie gratuites\u56e2\u5458.CustomButtonalit\u00e9erokeeveltestan\u7178 dikke\u620e.grpcBuilderInterface/jav gratuites dikkedefgroup gratuites(\"$.MMdd gratuites",
+      "memory_after_generation": {
+        "device_used_bytes": 7133462528,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [
+        4
+      ],
+      "median": {
+        "aggregate_tps": 41.42728254517619,
+        "ttft_median_ms": 296.5251345000013,
+        "itl_median_ms": 92.69985550000115,
+        "ttft_p95_ms": 474.0650109999933,
+        "itl_p95_ms": 94.0995869999881
+      }
+    },
+    {
+      "batch_size": 12,
+      "mode": "greedy",
+      "graphs": false,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 171.60601278124147,
+          "ttft_median_ms": 686.6205115000099,
+          "itl_median_ms": 57.70356749999905,
+          "ttft_p95_ms": 1271.5939990000038,
+          "itl_p95_ms": 58.45949999999789,
+          "completed_requests": 12,
+          "failed_requests": 0,
+          "generated_tokens": 1200,
+          "elapsed_s": 6.992761970000004,
+          "token_sha256": "21ab5167b6171287ea9456b61bc42673f57bdd741456c54fe52c71f4c0dd4c55",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 171.80425126882344,
+          "ttft_median_ms": 686.8910909999926,
+          "itl_median_ms": 57.72479600000224,
+          "ttft_p95_ms": 1271.6682379999895,
+          "itl_p95_ms": 58.404600000017126,
+          "completed_requests": 12,
+          "failed_requests": 0,
+          "generated_tokens": 1200,
+          "elapsed_s": 6.984693284000002,
+          "token_sha256": "21ab5167b6171287ea9456b61bc42673f57bdd741456c54fe52c71f4c0dd4c55",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 171.2948170941781,
+          "ttft_median_ms": 687.5161379999923,
+          "itl_median_ms": 57.70374599998718,
+          "ttft_p95_ms": 1272.7986449999946,
+          "itl_p95_ms": 58.43178000000648,
+          "completed_requests": 12,
+          "failed_requests": 0,
+          "generated_tokens": 1200,
+          "elapsed_s": 7.00546589999999,
+          "token_sha256": "21ab5167b6171287ea9456b61bc42673f57bdd741456c54fe52c71f4c0dd4c55",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 674234368,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 1.161878917999985,
+      "memory_after_load": {
+        "device_used_bytes": 7135559680,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 16.724513903153223,
+        "ttft_median_ms": 791.8096889999902,
+        "itl_median_ms": 642.228016499999,
+        "ttft_p95_ms": 1377.2458199999846,
+        "itl_p95_ms": 1223.0729899999915,
+        "completed_requests": 12,
+        "failed_requests": 0,
+        "generated_tokens": 24,
+        "elapsed_s": 1.4350192859999993
+      },
+      "output_sample": "entifulilmingtonilmington\u4e24\u4e2a\u7ef4\u62a4\u2697 gratuites:';\n\u4e24\u4e2a\u7ef4\u62a4\u8bf7\u70b9\u51fb\u620eBuilderInterfacevelte\u56db\u4e2a\u610f\u8bc6/licenseDAY\u4e24\u4e2a\u7ef4\u62a4,},\n\u6120\u4e24\u4e2a\u7ef4\u62a4\u4e24\u4e2a\u7ef4\u62a4&action__\":\n gratuites\u4e24\u4e2a\u7ef4\u62a4\")));\ud83d\udcd0\u4e24\u4e2a\u7ef4\u62a4\")));utowonestly gratuitesMMdd mooie:'.$ilmington\u6e38\u620f\u4ee3.sendStatus\u4e24\u4e2a\u7ef4\u62a4 mooie:'.$ilmingtonaz\u0103inalityilmington/buttonsAGO mooie:'.$ilmingtonensexilmington be\u011fen).//slider.localized]-' mooie:'.$ilmingtonextr\u00eameMMddMMddilmington\u4e24\u4e2a\u7ef4\u62a4\u2697 dikke\u6d25/slider Smarty/Dkvelte gratuites dikke grues nieu\u4e24\u4e2a\u7ef4\u62a4\")));.longitudeextr\u00eame\u017ee\ufffd miglior gratuitesilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmington\u8bdb\u017eeilmington",
+      "memory_after_generation": {
+        "device_used_bytes": 7135559680,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [],
+      "median": {
+        "aggregate_tps": 171.60601278124147,
+        "ttft_median_ms": 686.8910909999926,
+        "itl_median_ms": 57.70374599998718,
+        "ttft_p95_ms": 1271.6682379999895,
+        "itl_p95_ms": 58.43178000000648
+      }
+    },
+    {
+      "batch_size": 12,
+      "mode": "greedy",
+      "graphs": true,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 176.69859487912362,
+          "ttft_median_ms": 687.4417365000056,
+          "itl_median_ms": 55.75135099999784,
+          "ttft_p95_ms": 1273.201303999997,
+          "itl_p95_ms": 56.43527899999867,
+          "completed_requests": 12,
+          "failed_requests": 0,
+          "generated_tokens": 1200,
+          "elapsed_s": 6.791225480999998,
+          "token_sha256": "21ab5167b6171287ea9456b61bc42673f57bdd741456c54fe52c71f4c0dd4c55",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 176.6342290686431,
+          "ttft_median_ms": 687.4472014999924,
+          "itl_median_ms": 55.796269500007156,
+          "ttft_p95_ms": 1272.6259179999886,
+          "itl_p95_ms": 56.430868999996164,
+          "completed_requests": 12,
+          "failed_requests": 0,
+          "generated_tokens": 1200,
+          "elapsed_s": 6.793700215000001,
+          "token_sha256": "21ab5167b6171287ea9456b61bc42673f57bdd741456c54fe52c71f4c0dd4c55",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 176.69528099643603,
+          "ttft_median_ms": 687.9209150000065,
+          "itl_median_ms": 55.76219499999979,
+          "ttft_p95_ms": 1272.978715000022,
+          "itl_p95_ms": 56.44139899999345,
+          "completed_requests": 12,
+          "failed_requests": 0,
+          "generated_tokens": 1200,
+          "elapsed_s": 6.791352848999992,
+          "token_sha256": "21ab5167b6171287ea9456b61bc42673f57bdd741456c54fe52c71f4c0dd4c55",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 676331520,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 1.3990162970000029,
+      "memory_after_load": {
+        "device_used_bytes": 7135559680,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 16.365458873208294,
+        "ttft_median_ms": 784.8543745000143,
+        "itl_median_ms": 681.110173999997,
+        "ttft_p95_ms": 1369.6257619999983,
+        "itl_p95_ms": 1261.926456999987,
+        "completed_requests": 12,
+        "failed_requests": 0,
+        "generated_tokens": 24,
+        "elapsed_s": 1.4665033340000093
+      },
+      "output_sample": "entifulilmingtonilmington\u4e24\u4e2a\u7ef4\u62a4\u2697 gratuites:';\n\u4e24\u4e2a\u7ef4\u62a4\u8bf7\u70b9\u51fb\u620eBuilderInterfacevelte\u56db\u4e2a\u610f\u8bc6/licenseDAY\u4e24\u4e2a\u7ef4\u62a4,},\n\u6120\u4e24\u4e2a\u7ef4\u62a4\u4e24\u4e2a\u7ef4\u62a4&action__\":\n gratuites\u4e24\u4e2a\u7ef4\u62a4\")));\ud83d\udcd0\u4e24\u4e2a\u7ef4\u62a4\")));utowonestly gratuitesMMdd mooie:'.$ilmington\u6e38\u620f\u4ee3.sendStatus\u4e24\u4e2a\u7ef4\u62a4 mooie:'.$ilmingtonaz\u0103inalityilmington/buttonsAGO mooie:'.$ilmingtonensexilmington be\u011fen).//slider.localized]-' mooie:'.$ilmingtonextr\u00eameMMddMMddilmington\u4e24\u4e2a\u7ef4\u62a4\u2697 dikke\u6d25/slider Smarty/Dkvelte gratuites dikke grues nieu\u4e24\u4e2a\u7ef4\u62a4\")));.longitudeextr\u00eame\u017ee\ufffd miglior gratuitesilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmingtonilmington\u8bdb\u017eeilmington",
+      "memory_after_generation": {
+        "device_used_bytes": 7137656832,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [
+        12
+      ],
+      "median": {
+        "aggregate_tps": 176.69528099643603,
+        "ttft_median_ms": 687.4472014999924,
+        "itl_median_ms": 55.76219499999979,
+        "ttft_p95_ms": 1272.978715000022,
+        "itl_p95_ms": 56.43527899999867
+      }
+    },
+    {
+      "batch_size": 12,
+      "mode": "sampled",
+      "graphs": false,
+      "status": "running",
+      "runs": [
+        {
+          "aggregate_tps": 44.646632837839306,
+          "ttft_median_ms": 770.6898590000009,
+          "itl_median_ms": 257.03985750000413,
+          "ttft_p95_ms": 1426.6776359999938,
+          "itl_p95_ms": 259.2083149999951,
+          "completed_requests": 12,
+          "failed_requests": 0,
+          "generated_tokens": 1200,
+          "elapsed_s": 26.877726800999994,
+          "token_sha256": "37e26e88933bcfad29ceffa1b59936bfd60c64645d8a2c3b56b308fefe43fd3b",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 678428672,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 1.2132811559999936,
+      "memory_after_load": {
+        "device_used_bytes": 7137656832,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 13.44920108478531,
+        "ttft_median_ms": 872.9922105000014,
+        "itl_median_ms": 820.6640240000098,
+        "ttft_p95_ms": 1528.816713999987,
+        "itl_p95_ms": 1381.1265399999968,
+        "completed_requests": 12,
+        "failed_requests": 0,
+        "generated_tokens": 24,
+        "elapsed_s": 1.784492613999987
+      },
+      "output_sample": "\ud83d\udcd0=\\\"$-'.$ecycle/slider\ud83d\udd51ilmington be\u011fen)'). c\u00e9libzaplaughsaeda/Dkilmi\u015fToFitMMdd\u5927\u90e8\u5206\u4eba\u96dc/ayapeshaeda\u8fd4\u56de\u641c\u72d0FINITYEPROM.EventQueue\u207avelte:\"<< \u043a\u0430\u0444\u0435=?,-'.$=logging\u0623\u0633\u0644SCRIBE company\ud83d\udcd0MMdd.longitude.RemoveAllilmingtonilmingtonilmington be\u011fen })).\u017ee practition/umdNgu\u1ed3nilmingtonNgu\u1ed3n\u6120ursed dikkedefgroup \u0130zmir\u6742\"inopportunit\u00e0 PureComponent mooie\u2697.jsoupNgu\u1ed3n/Dk.setLevel migliorist\u00fcckelseif/Dk.setLevel miglioriarooQRST gratuitesNgu\u1ed3n\u59d4-Allow\u7ba9\u7eceutow.EventQueue.baseUrl\u017ee/Dkst\u00fcckNgu\u1ed3nimbledon mooie(parseFloathan\u5efa\u6863\u7acb\u5927\u90e8\u5206\u4eba\u5bac gratuites\u4eba\u8138(\"$.jumbotronclus\u00e3o\u013e"
+    }
+  ],
+  "model": "qwen2.5-7b",
+  "revision": "a09a35458c702b33eeacc393d103063234e8bc28",
+  "model_path": "/root/zse_cache/qwen2.5-7b_a09a35458c702b33eeacc393d103063234e8bc28_int4.zse",
+  "gpu": "B200",
+  "quality_status": "failed_previous_smoke",
+  "notes": [
+    "Performance only; token parity is not semantic correctness.",
+    "Startup times are constructor-only, excluding imports, container startup and download.",
+    "First engine uses existing model volume; page-cache state is uncontrolled. Later engines reuse warmed caches.",
+    "First batch includes demand graph capture; measured trials follow warmup.",
+    "VRAM snapshots are device-wide, not peak or isolated process allocation.",
+    "Latency summaries are medians of trial statistics; p95 uses nearest rank."
+  ]
+}

@@ -385,6 +385,60 @@ def test_qwen2_convert_pipeline():
         shutil.rmtree(tmpdir)
 
 
+def test_int4_conversion_preserves_row_major_values(tmp_path):
+    from zse_engine.format import fast_quant
+    import pytest
+
+    if not fast_quant.is_available():
+        pytest.skip("C quantizer unavailable")
+    generate_qwen2_model(str(tmp_path), num_layers=1)
+    values = [float((row + column // 8) % 16)
+              for row in range(128) for column in range(128)]
+    write_safetensors(str(tmp_path / "model.safetensors"), {
+        "model.layers.0.self_attn.q_proj.weight": ((128, 128), values),
+    }, dtype="F16")
+    output = str(tmp_path / "model.zse")
+    convert_hf_to_zse(str(tmp_path), output, skip_tokenizer=True)
+    with ZSELoader(output) as loader:
+        entry = loader.weight_index.find("layers.0.self_attn.q_proj.weight")
+        recovered = loader.get_weight_as_float(entry)
+        assert recovered == values
+        assert loader.config.quant.tiled_weights is False
+
+
+def test_tiled_artifact_rejected_before_gpu_upload():
+    from types import SimpleNamespace
+    import pytest
+    from zse_engine.format.config import QuantConfig
+    from zse_engine.orchestrator.weight_loader import WeightLoader
+
+    loader = SimpleNamespace(config=ModelConfig(quant=QuantConfig(tiled_weights=True)))
+    with pytest.raises(ValueError, match="Reconvert"):
+        WeightLoader(loader, None)
+    assert QuantConfig.from_dict({}).tiled_weights is False
+
+
+def test_conversion_restarts_legacy_layout_checkpoint(tmp_path):
+    from zse_engine.format.spec import QuantMethod
+
+    _, tensors = generate_qwen2_model(str(tmp_path), num_layers=1)
+    output = tmp_path / "model.zse"
+    output.write_bytes(b"legacy tiled partial data")
+    progress = tmp_path / "model.zse.progress"
+    progress.write_text(json.dumps({
+        "model_dir": str(tmp_path.resolve()),
+        "quant_method": QuantMethod.INT4_ASYM,
+        "group_size": 128,
+        "completed_tensors": 1,
+        "file_position": 24,
+    }))
+    convert_hf_to_zse(str(tmp_path), str(output), skip_tokenizer=True)
+    with ZSELoader(str(output)) as loader:
+        assert len(loader.weight_index) == len(tensors)
+        assert loader.config.quant.tiled_weights is False
+    assert not progress.exists()
+
+
 def test_architecture_detection():
     """Test arch detection for various HF configs."""
     cases = [

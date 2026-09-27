@@ -175,6 +175,11 @@ class WeightLoader:
     _DEFAULT_RING_SLOTS = 4                   # 4 slots → 256 MB pinned footprint
 
     def __init__(self, loader: ZSELoader, gpu_mem):
+        if loader.config.quant.tiled_weights:
+            raise ValueError(
+                "Tiled INT4 weight storage is not supported by production inference. "
+                "Reconvert the original model with the current converter to row-major storage."
+            )
         self._loader = loader
         self._gpu_mem = gpu_mem
         self._bulk_ptr = 0  # Base pointer for bulk allocation

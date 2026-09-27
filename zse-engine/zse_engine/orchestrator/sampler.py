@@ -15,6 +15,7 @@ import struct
 import math
 import random
 import array
+import heapq
 from typing import List, Optional, Set
 
 
@@ -83,6 +84,11 @@ class Sampler:
             for i in range(len(logits)):
                 logits[i] *= inv_t
 
+        if 0 < top_k < len(logits):
+            token = self._sample_top_k(logits, top_k, top_p)
+            if token is not None:
+                return token
+
         # Top-k filtering
         if top_k > 0:
             logits = self._top_k_filter_array(logits, top_k)
@@ -96,6 +102,21 @@ class Sampler:
 
         # Sample from distribution
         return self._categorical_sample(probs)
+
+    def _sample_top_k(self, logits, top_k: int, top_p: float) -> Optional[int]:
+        if not all(math.isfinite(value) for value in logits):
+            return None
+        threshold = heapq.nlargest(top_k, logits)[-1]
+        candidates = [(token, value) for token, value in enumerate(logits)
+                      if value >= threshold]
+        values = [value for token, value in candidates]
+        if top_p < 1.0:
+            values = self._top_p_filter(values, top_p)
+        probs = self._softmax(values)
+        if candidates[-1][0] != len(logits) - 1:
+            candidates.append((len(logits) - 1, float('-inf')))
+            probs.append(0.0)
+        return candidates[self._categorical_sample(probs)][0]
 
     def greedy(self, logits_bytes: bytes, vocab_size: int) -> int:
         """Greedy (argmax) decoding — fast path using array module."""

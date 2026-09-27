@@ -45,6 +45,67 @@ def make_request(
 # Request Tests
 # ======================================================================
 
+class TestSampledGraphRouting:
+    @pytest.mark.parametrize("graph_available,lora_id,temperature,penalty", [
+        (True, None, 1.0, 1.0),
+        (False, None, 1.0, 1.0),
+        (True, "adapter", 1.0, 1.0),
+        (True, None, 0.0, 1.2),
+    ])
+    def test_sampling_preserved(self, graph_available, lora_id, temperature, penalty):
+        from unittest.mock import Mock
+        from zse_engine.zstreamer.batch_runner import BatchRunner, StepResult
+
+        runner = Mock()
+        runner._graph_runner = object() if graph_available else None
+        rows = [b"first", b"second"]
+        runner.batched_decode_graph.return_value = rows
+        runner.batched_decode.return_value = rows
+        sampler = Mock()
+        sampler.sample.side_effect = [10, 11]
+        manager = Mock()
+        adapter = object() if lora_id else None
+        manager.get_adapter.return_value = adapter
+        scheduler = Mock()
+        batch = BatchRunner(runner, sampler, Mock(), scheduler,
+                            vocab_size=100, lora_manager=manager)
+        requests = [
+            InferenceRequest(
+                request_id=f"req-{index}", prompt_tokens=[1, 2],
+                params=GenerationParams(temperature=temperature, top_k=7,
+                                        top_p=0.8, repetition_penalty=penalty,
+                                        lora_id=lora_id),
+            )
+            for index in range(2)
+        ]
+        for index, request in enumerate(requests):
+            request.seq_id = index
+            request.mark_decoding()
+            request.add_token(5)
+        result = StepResult()
+        batch._execute_batched_decode(requests, result, set())
+
+        if graph_available and adapter is None:
+            runner.batched_decode_graph.assert_called_once_with(
+                [5, 5], [0, 1], [2, 2], return_logits=True,
+            )
+            runner.batched_decode.assert_not_called()
+        else:
+            runner.batched_decode.assert_called_once_with(
+                [5, 5], [0, 1], [2, 2], lora_adapter=adapter,
+            )
+            runner.batched_decode_graph.assert_not_called()
+        assert result.errors == {}
+        assert result.new_tokens == {"req-0": 10, "req-1": 11}
+        scheduler.on_request_error.assert_not_called()
+        for index, call in enumerate(sampler.sample.call_args_list):
+            assert call.args == (rows[index], 100)
+            assert call.kwargs == dict(temperature=temperature, top_p=0.8,
+                                       top_k=7, repetition_penalty=penalty,
+                                       past_tokens=requests[index].past_tokens)
+        assert sampler.sample.call_count == 2
+
+
 class TestInferenceRequest:
     def test_basic_properties(self):
         req = make_request(prompt_len=20, max_tokens=100)

@@ -1,0 +1,1110 @@
+{
+  "configuration": {
+    "batch_sizes": [
+      1,
+      4,
+      12
+    ],
+    "runs": 3,
+    "max_tokens": 100,
+    "top_k": 50,
+    "top_p": 0.9,
+    "repetition_penalty": 1.0,
+    "seed": 20260927
+  },
+  "cases": [
+    {
+      "batch_size": 1,
+      "mode": "greedy",
+      "graphs": false,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 61.65075700758002,
+          "ttft_median_ms": 115.13285000000018,
+          "itl_median_ms": 15.349051000001168,
+          "ttft_p95_ms": 115.13285000000018,
+          "itl_p95_ms": 15.52125999999987,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 1.6220400989999995,
+          "token_sha256": "50e95d1592f230e9bd74e00d78615f9f48e24de2cfec6b1ba43dd131fa0d04c8",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 61.7550591427275,
+          "ttft_median_ms": 115.63308600000077,
+          "itl_median_ms": 14.971318000000622,
+          "ttft_p95_ms": 115.63308600000077,
+          "itl_p95_ms": 15.664914000000252,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 1.6193005300000003,
+          "token_sha256": "50e95d1592f230e9bd74e00d78615f9f48e24de2cfec6b1ba43dd131fa0d04c8",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 62.52277266948946,
+          "ttft_median_ms": 115.68480899999933,
+          "itl_median_ms": 14.904372000000166,
+          "ttft_p95_ms": 115.68480899999933,
+          "itl_p95_ms": 15.613409000000189,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 1.5994172319999986,
+          "token_sha256": "50e95d1592f230e9bd74e00d78615f9f48e24de2cfec6b1ba43dd131fa0d04c8",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 4194304,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 5.1787534950000005,
+      "memory_after_load": {
+        "device_used_bytes": 7119831040,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 5.9698008133871445,
+        "ttft_median_ms": 319.0063159999994,
+        "itl_median_ms": 15.931978000001124,
+        "ttft_p95_ms": 319.0063159999994,
+        "itl_p95_ms": 15.931978000001124,
+        "completed_requests": 1,
+        "failed_requests": 0,
+        "generated_tokens": 2,
+        "elapsed_s": 0.3350195530000004
+      },
+      "output_sample": "### Essay Number 0: An Introduction to Renewable Energy\n\nRenewable energy, often referred to as green energy, is a critical component in the global effort to transition away from fossil fuels and mitigate the impacts of climate change. Unlike traditional energy sources such as coal, oil, and natural gas, which are finite and contribute to environmental degradation, renewable energy sources are sustainable and have minimal environmental impact. These sources include solar, wind, hydro, geothermal, and biomass, each offering unique benefits and",
+      "memory_after_generation": {
+        "device_used_bytes": 7119831040,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [],
+      "median": {
+        "aggregate_tps": 61.7550591427275,
+        "ttft_median_ms": 115.63308600000077,
+        "itl_median_ms": 14.971318000000622,
+        "ttft_p95_ms": 115.63308600000077,
+        "itl_p95_ms": 15.613409000000189
+      }
+    },
+    {
+      "batch_size": 1,
+      "mode": "greedy",
+      "graphs": true,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 111.01622480366343,
+          "ttft_median_ms": 115.13406399999937,
+          "itl_median_ms": 7.957091000001526,
+          "ttft_p95_ms": 115.13406399999937,
+          "itl_p95_ms": 8.666932999997101,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 0.9007692359999986,
+          "token_sha256": "50e95d1592f230e9bd74e00d78615f9f48e24de2cfec6b1ba43dd131fa0d04c8",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 110.95230692341678,
+          "ttft_median_ms": 115.5433720000012,
+          "itl_median_ms": 7.968546000000742,
+          "ttft_p95_ms": 115.5433720000012,
+          "itl_p95_ms": 8.66952099999807,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 0.9012881549999996,
+          "token_sha256": "50e95d1592f230e9bd74e00d78615f9f48e24de2cfec6b1ba43dd131fa0d04c8",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 110.97972505077199,
+          "ttft_median_ms": 115.64399000000236,
+          "itl_median_ms": 7.954893000000851,
+          "ttft_p95_ms": 115.64399000000236,
+          "itl_p95_ms": 8.656085000001923,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 0.9010654870000003,
+          "token_sha256": "50e95d1592f230e9bd74e00d78615f9f48e24de2cfec6b1ba43dd131fa0d04c8",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 660602880,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 3.786530314000002,
+      "memory_after_load": {
+        "device_used_bytes": 7119831040,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 5.242826049752967,
+        "ttft_median_ms": 274.40092399999827,
+        "itl_median_ms": 106.99421200000003,
+        "ttft_p95_ms": 274.40092399999827,
+        "itl_p95_ms": 106.99421200000003,
+        "completed_requests": 1,
+        "failed_requests": 0,
+        "generated_tokens": 2,
+        "elapsed_s": 0.3814736520000004
+      },
+      "output_sample": "### Essay Number 0: An Introduction to Renewable Energy\n\nRenewable energy, often referred to as green energy, is a critical component in the global effort to transition away from fossil fuels and mitigate the impacts of climate change. Unlike traditional energy sources such as coal, oil, and natural gas, which are finite and contribute to environmental degradation, renewable energy sources are sustainable and have minimal environmental impact. These sources include solar, wind, hydro, geothermal, and biomass, each offering unique benefits and",
+      "memory_after_generation": {
+        "device_used_bytes": 7121928192,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [
+        1
+      ],
+      "median": {
+        "aggregate_tps": 110.97972505077199,
+        "ttft_median_ms": 115.5433720000012,
+        "itl_median_ms": 7.957091000001526,
+        "ttft_p95_ms": 115.5433720000012,
+        "itl_p95_ms": 8.666932999997101
+      }
+    },
+    {
+      "batch_size": 1,
+      "mode": "sampled",
+      "graphs": false,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 13.333110382394759,
+          "ttft_median_ms": 160.70620800000057,
+          "itl_median_ms": 74.03841800000066,
+          "ttft_p95_ms": 160.70620800000057,
+          "itl_p95_ms": 75.8067070000017,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 7.500125412000003,
+          "token_sha256": "14eee06106bc5e0fb85539249ac78d62f5a6cd0b438f8dc68a74085ddd0716e5",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 13.387558417759134,
+          "ttft_median_ms": 161.1183220000001,
+          "itl_median_ms": 73.77742699999601,
+          "ttft_p95_ms": 161.1183220000001,
+          "itl_p95_ms": 74.67537099999788,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 7.469621934000003,
+          "token_sha256": "14eee06106bc5e0fb85539249ac78d62f5a6cd0b438f8dc68a74085ddd0716e5",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 13.32392178931298,
+          "ttft_median_ms": 161.9476259999999,
+          "itl_median_ms": 74.06022199999995,
+          "ttft_p95_ms": 161.9476259999999,
+          "itl_p95_ms": 75.60909700000451,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 7.505297732999999,
+          "token_sha256": "14eee06106bc5e0fb85539249ac78d62f5a6cd0b438f8dc68a74085ddd0716e5",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 662700032,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 3.0239218040000004,
+      "memory_after_load": {
+        "device_used_bytes": 7124025344,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 5.084462829590862,
+        "ttft_median_ms": 318.5119159999985,
+        "itl_median_ms": 74.77695700000098,
+        "ttft_p95_ms": 318.5119159999985,
+        "itl_p95_ms": 74.77695700000098,
+        "completed_requests": 1,
+        "failed_requests": 0,
+        "generated_tokens": 2,
+        "elapsed_s": 0.3933552210000002
+      },
+      "output_sample": "### Essay Number 0: An Introduction to Renewable Energy\n\nRenewable energy, a term that encompasses a variety of energy sources that are naturally replenished and are replenished on a human timescale, has become increasingly important in the modern world. The urgency of addressing climate change and reducing carbon emissions has led to a significant shift towards these sustainable energy sources. From solar power to wind energy, bioenergy to hydroelectric power, renewable energy is not only environmentally friendly but also plays a crucial role in",
+      "memory_after_generation": {
+        "device_used_bytes": 7124025344,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [],
+      "median": {
+        "aggregate_tps": 13.333110382394759,
+        "ttft_median_ms": 161.1183220000001,
+        "itl_median_ms": 74.03841800000066,
+        "ttft_p95_ms": 161.1183220000001,
+        "itl_p95_ms": 75.60909700000451
+      }
+    },
+    {
+      "batch_size": 1,
+      "mode": "sampled",
+      "graphs": true,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 14.751470823352475,
+          "ttft_median_ms": 161.30437099999995,
+          "itl_median_ms": 67.16711500000372,
+          "ttft_p95_ms": 161.30437099999995,
+          "itl_p95_ms": 67.76600000000599,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 6.778985038000002,
+          "token_sha256": "14eee06106bc5e0fb85539249ac78d62f5a6cd0b438f8dc68a74085ddd0716e5",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 14.70680906574744,
+          "ttft_median_ms": 161.37674899999865,
+          "itl_median_ms": 67.01659099999802,
+          "ttft_p95_ms": 161.37674899999865,
+          "itl_p95_ms": 67.78966099999195,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 6.799571514999997,
+          "token_sha256": "14eee06106bc5e0fb85539249ac78d62f5a6cd0b438f8dc68a74085ddd0716e5",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 14.80869157003447,
+          "ttft_median_ms": 162.5636060000062,
+          "itl_median_ms": 66.5430029999925,
+          "ttft_p95_ms": 162.5636060000062,
+          "itl_p95_ms": 67.37775100000931,
+          "completed_requests": 1,
+          "failed_requests": 0,
+          "generated_tokens": 100,
+          "elapsed_s": 6.752791056999996,
+          "token_sha256": "14eee06106bc5e0fb85539249ac78d62f5a6cd0b438f8dc68a74085ddd0716e5",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 664797184,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 2.5840819709999963,
+      "memory_after_load": {
+        "device_used_bytes": 7124025344,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 4.392480010092515,
+        "ttft_median_ms": 318.63132800000216,
+        "itl_median_ms": 136.61147499999515,
+        "ttft_p95_ms": 318.63132800000216,
+        "itl_p95_ms": 136.61147499999515,
+        "completed_requests": 1,
+        "failed_requests": 0,
+        "generated_tokens": 2,
+        "elapsed_s": 0.45532364299999983
+      },
+      "output_sample": "### Essay Number 0: An Introduction to Renewable Energy\n\nRenewable energy, a term that encompasses a variety of energy sources that are naturally replenished and are replenished on a human timescale, has become increasingly important in the modern world. The urgency of addressing climate change and reducing carbon emissions has led to a significant shift towards these sustainable energy sources. From solar power to wind energy, bioenergy to hydroelectric power, renewable energy is not only environmentally friendly but also plays a crucial role in",
+      "memory_after_generation": {
+        "device_used_bytes": 7126122496,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [
+        1
+      ],
+      "median": {
+        "aggregate_tps": 14.751470823352475,
+        "ttft_median_ms": 161.37674899999865,
+        "itl_median_ms": 67.01659099999802,
+        "ttft_p95_ms": 161.37674899999865,
+        "itl_p95_ms": 67.76600000000599
+      }
+    },
+    {
+      "batch_size": 4,
+      "mode": "greedy",
+      "graphs": false,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 127.47236321248079,
+          "ttft_median_ms": 287.5825189999972,
+          "itl_median_ms": 27.04088299999796,
+          "ttft_p95_ms": 459.58602000000326,
+          "itl_p95_ms": 27.82561600000122,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 3.137935077999998,
+          "token_sha256": "2d0861f5e6e871d09bcd074eaa0567e82ab1170d34cf427d9918f2899e29575b",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 127.57748085641552,
+          "ttft_median_ms": 287.29465550000555,
+          "itl_median_ms": 27.027386499995032,
+          "ttft_p95_ms": 458.87549900000124,
+          "itl_p95_ms": 27.7995360000034,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 3.1353495719999955,
+          "token_sha256": "2d0861f5e6e871d09bcd074eaa0567e82ab1170d34cf427d9918f2899e29575b",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 127.61880931401434,
+          "ttft_median_ms": 287.00445350000336,
+          "itl_median_ms": 27.019992999996134,
+          "ttft_p95_ms": 458.6301589999948,
+          "itl_p95_ms": 27.7763670000013,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 3.134334210999995,
+          "token_sha256": "2d0861f5e6e871d09bcd074eaa0567e82ab1170d34cf427d9918f2899e29575b",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 666894336,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 2.6337362590000026,
+      "memory_after_load": {
+        "device_used_bytes": 7128219648,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 12.486004866351664,
+        "ttft_median_ms": 441.9949179999989,
+        "itl_median_ms": 197.95330750000062,
+        "ttft_p95_ms": 613.6760389999978,
+        "itl_p95_ms": 369.95034100000623,
+        "completed_requests": 4,
+        "failed_requests": 0,
+        "generated_tokens": 8,
+        "elapsed_s": 0.6407173540000031
+      },
+      "output_sample": "### Essay Number 0: An Introduction to Renewable Energy\n\nRenewable energy, often referred to as green energy, is a critical component in the global effort to transition away from fossil fuels and mitigate the impacts of climate change. Unlike traditional energy sources such as coal, oil, and natural gas, which are finite and contribute to environmental degradation, renewable energy sources are sustainable and have minimal environmental impact. These sources include solar, wind, hydro, geothermal, and biomass, each offering unique benefits and",
+      "memory_after_generation": {
+        "device_used_bytes": 7128219648,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [],
+      "median": {
+        "aggregate_tps": 127.57748085641552,
+        "ttft_median_ms": 287.29465550000555,
+        "itl_median_ms": 27.027386499995032,
+        "ttft_p95_ms": 458.87549900000124,
+        "itl_p95_ms": 27.7995360000034
+      }
+    },
+    {
+      "batch_size": 4,
+      "mode": "greedy",
+      "graphs": true,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 134.04861513511074,
+          "ttft_median_ms": 287.2953489999972,
+          "itl_median_ms": 25.540306499998167,
+          "ttft_p95_ms": 459.2671879999983,
+          "itl_p95_ms": 26.235155999998483,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 2.9839920360000036,
+          "token_sha256": "2d0861f5e6e871d09bcd074eaa0567e82ab1170d34cf427d9918f2899e29575b",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 134.02753008699085,
+          "ttft_median_ms": 287.4647905000032,
+          "itl_median_ms": 25.54677550000406,
+          "ttft_p95_ms": 459.4130389999975,
+          "itl_p95_ms": 26.243066000006365,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 2.9844614739999997,
+          "token_sha256": "2d0861f5e6e871d09bcd074eaa0567e82ab1170d34cf427d9918f2899e29575b",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 134.01845416557458,
+          "ttft_median_ms": 287.9542675000053,
+          "itl_median_ms": 25.536051499997825,
+          "ttft_p95_ms": 459.6333300000026,
+          "itl_p95_ms": 26.24616699999649,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 2.9846635859999964,
+          "token_sha256": "2d0861f5e6e871d09bcd074eaa0567e82ab1170d34cf427d9918f2899e29575b",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 668991488,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 2.688443872999997,
+      "memory_after_load": {
+        "device_used_bytes": 7128219648,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 10.76737239322837,
+        "ttft_median_ms": 459.37151249999886,
+        "itl_median_ms": 282.8501660000029,
+        "ttft_p95_ms": 631.3868769999971,
+        "itl_p95_ms": 455.3521779999983,
+        "completed_requests": 4,
+        "failed_requests": 0,
+        "generated_tokens": 8,
+        "elapsed_s": 0.7429853550000018
+      },
+      "output_sample": "### Essay Number 0: An Introduction to Renewable Energy\n\nRenewable energy, often referred to as green energy, is a critical component in the global effort to transition away from fossil fuels and mitigate the impacts of climate change. Unlike traditional energy sources such as coal, oil, and natural gas, which are finite and contribute to environmental degradation, renewable energy sources are sustainable and have minimal environmental impact. These sources include solar, wind, hydro, geothermal, and biomass, each offering unique benefits and",
+      "memory_after_generation": {
+        "device_used_bytes": 7130316800,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [
+        4
+      ],
+      "median": {
+        "aggregate_tps": 134.02753008699085,
+        "ttft_median_ms": 287.4647905000032,
+        "itl_median_ms": 25.540306499998167,
+        "ttft_p95_ms": 459.4130389999975,
+        "itl_p95_ms": 26.243066000006365
+      }
+    },
+    {
+      "batch_size": 4,
+      "mode": "sampled",
+      "graphs": false,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 14.975285442203017,
+          "ttft_median_ms": 405.17267149999725,
+          "itl_median_ms": 263.15748950000284,
+          "ttft_p95_ms": 647.647292000002,
+          "itl_p95_ms": 266.328860999991,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 26.71067617,
+          "token_sha256": "34ade246e3ae9c80e44bf8ddadca14449da9ca2ad900647ef068a07bc4d618ea",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 14.95428590917594,
+          "ttft_median_ms": 406.0795749999926,
+          "itl_median_ms": 263.65808350000464,
+          "ttft_p95_ms": 647.5053839999987,
+          "itl_p95_ms": 266.4018510000119,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 26.748184596000016,
+          "token_sha256": "34ade246e3ae9c80e44bf8ddadca14449da9ca2ad900647ef068a07bc4d618ea",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 14.959523453418065,
+          "ttft_median_ms": 406.5755605000021,
+          "itl_median_ms": 263.533794500006,
+          "ttft_p95_ms": 649.254065000008,
+          "itl_p95_ms": 266.1427070000002,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 26.738819671999977,
+          "token_sha256": "34ade246e3ae9c80e44bf8ddadca14449da9ca2ad900647ef068a07bc4d618ea",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 671088640,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 2.6028165710000053,
+      "memory_after_load": {
+        "device_used_bytes": 7130316800,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 7.488521400164246,
+        "ttft_median_ms": 563.7084915000016,
+        "itl_median_ms": 414.6414049999976,
+        "ttft_p95_ms": 804.8828490000091,
+        "itl_p95_ms": 567.330644000009,
+        "completed_requests": 4,
+        "failed_requests": 0,
+        "generated_tokens": 8,
+        "elapsed_s": 1.0683016810000083
+      },
+      "output_sample": "### Essay Number 0: An Introduction to Renewable Energy\n\nRenewable energy is a vital component of modern energy systems, offering sustainable alternatives to traditional fossil fuels. As concerns over climate change, environmental degradation, and energy security continue to grow, the development and adoption of renewable energy sources have become increasingly important.\n\nRenewable energy refers to energy that is derived from natural processes that are replenished at a higher rate than they are consumed. These sources include solar, wind, hydro, geothermal,",
+      "memory_after_generation": {
+        "device_used_bytes": 7130316800,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [],
+      "median": {
+        "aggregate_tps": 14.959523453418065,
+        "ttft_median_ms": 406.0795749999926,
+        "itl_median_ms": 263.533794500006,
+        "ttft_p95_ms": 647.647292000002,
+        "itl_p95_ms": 266.328860999991
+      }
+    },
+    {
+      "batch_size": 4,
+      "mode": "sampled",
+      "graphs": true,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 15.09446631419971,
+          "ttft_median_ms": 403.098178999997,
+          "itl_median_ms": 261.1183865000015,
+          "ttft_p95_ms": 643.7984359999973,
+          "itl_p95_ms": 263.7752040000123,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 26.499777578999982,
+          "token_sha256": "34ade246e3ae9c80e44bf8ddadca14449da9ca2ad900647ef068a07bc4d618ea",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 14.919736237522022,
+          "ttft_median_ms": 403.30608950000624,
+          "itl_median_ms": 262.8748929999887,
+          "ttft_p95_ms": 645.6827830000123,
+          "itl_p95_ms": 272.3243099999877,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 26.810125435999993,
+          "token_sha256": "34ade246e3ae9c80e44bf8ddadca14449da9ca2ad900647ef068a07bc4d618ea",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 14.696008038683766,
+          "ttft_median_ms": 429.94143100000315,
+          "itl_median_ms": 264.556228999993,
+          "ttft_p95_ms": 679.1331189999994,
+          "itl_p95_ms": 295.93984699999965,
+          "completed_requests": 4,
+          "failed_requests": 0,
+          "generated_tokens": 400,
+          "elapsed_s": 27.21827580300001,
+          "token_sha256": "34ade246e3ae9c80e44bf8ddadca14449da9ca2ad900647ef068a07bc4d618ea",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 671088640,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 2.641060558999982,
+      "memory_after_load": {
+        "device_used_bytes": 7130316800,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 7.0033006083045235,
+        "ttft_median_ms": 566.5891019999947,
+        "itl_median_ms": 484.9654985000029,
+        "ttft_p95_ms": 807.6895080000099,
+        "itl_p95_ms": 633.3386539999992,
+        "completed_requests": 4,
+        "failed_requests": 0,
+        "generated_tokens": 8,
+        "elapsed_s": 1.1423185219999823
+      },
+      "output_sample": "### Essay Number 0: An Introduction to Renewable Energy\n\nRenewable energy is a vital component of modern energy systems, offering sustainable alternatives to traditional fossil fuels. As concerns over climate change, environmental degradation, and energy security continue to grow, the development and adoption of renewable energy sources have become increasingly important.\n\nRenewable energy refers to energy that is derived from natural processes that are replenished at a higher rate than they are consumed. These sources include solar, wind, hydro, geothermal,",
+      "memory_after_generation": {
+        "device_used_bytes": 7132413952,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [
+        4
+      ],
+      "median": {
+        "aggregate_tps": 14.919736237522022,
+        "ttft_median_ms": 403.30608950000624,
+        "itl_median_ms": 262.8748929999887,
+        "ttft_p95_ms": 645.6827830000123,
+        "itl_p95_ms": 272.3243099999877
+      }
+    },
+    {
+      "batch_size": 12,
+      "mode": "greedy",
+      "graphs": false,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 167.96556206448153,
+          "ttft_median_ms": 747.5871089999657,
+          "itl_median_ms": 58.00444349998202,
+          "ttft_p95_ms": 1382.8404129999967,
+          "itl_p95_ms": 58.836710999969455,
+          "completed_requests": 12,
+          "failed_requests": 0,
+          "generated_tokens": 1200,
+          "elapsed_s": 7.144321640999976,
+          "token_sha256": "735a1bbea05fef781cebc04afb2fedcbe8cca77dec030f76fb8d5085d454a066",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 168.3756663031318,
+          "ttft_median_ms": 747.7125044999866,
+          "itl_median_ms": 58.00215349998439,
+          "ttft_p95_ms": 1383.1280900000138,
+          "itl_p95_ms": 58.79421400004503,
+          "completed_requests": 12,
+          "failed_requests": 0,
+          "generated_tokens": 1200,
+          "elapsed_s": 7.126920572000017,
+          "token_sha256": "735a1bbea05fef781cebc04afb2fedcbe8cca77dec030f76fb8d5085d454a066",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 167.83171079003608,
+          "ttft_median_ms": 747.4391760000003,
+          "itl_median_ms": 57.998722499974065,
+          "ttft_p95_ms": 1382.6216310000063,
+          "itl_p95_ms": 58.801393000010194,
+          "completed_requests": 12,
+          "failed_requests": 0,
+          "generated_tokens": 1200,
+          "elapsed_s": 7.150019471000007,
+          "token_sha256": "735a1bbea05fef781cebc04afb2fedcbe8cca77dec030f76fb8d5085d454a066",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 673185792,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 2.6765557010000407,
+      "memory_after_load": {
+        "device_used_bytes": 7134511104,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 15.030561640984626,
+        "ttft_median_ms": 898.9238105000084,
+        "itl_median_ms": 696.2850579999724,
+        "ttft_p95_ms": 1535.0169359999768,
+        "itl_p95_ms": 1327.6352379999707,
+        "completed_requests": 12,
+        "failed_requests": 0,
+        "generated_tokens": 24,
+        "elapsed_s": 1.5967467199999987
+      },
+      "output_sample": "### Essay Number 0: An Introduction to Renewable Energy\n\nRenewable energy, often referred to as green energy, is a critical component in the global effort to transition away from fossil fuels and mitigate the impacts of climate change. Unlike traditional energy sources such as coal, oil, and natural gas, which are finite and contribute to environmental degradation, renewable energy sources are sustainable and have minimal environmental impact. These sources include solar, wind, hydro, geothermal, and biomass, each offering unique benefits and",
+      "memory_after_generation": {
+        "device_used_bytes": 7134511104,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [],
+      "median": {
+        "aggregate_tps": 167.96556206448153,
+        "ttft_median_ms": 747.5871089999657,
+        "itl_median_ms": 58.00215349998439,
+        "ttft_p95_ms": 1382.8404129999967,
+        "itl_p95_ms": 58.801393000010194
+      }
+    },
+    {
+      "batch_size": 12,
+      "mode": "greedy",
+      "graphs": true,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 173.54583021004154,
+          "ttft_median_ms": 749.1199279999989,
+          "itl_median_ms": 55.844229499996345,
+          "ttft_p95_ms": 1385.8503220000102,
+          "itl_p95_ms": 56.56630600003609,
+          "completed_requests": 12,
+          "failed_requests": 0,
+          "generated_tokens": 1200,
+          "elapsed_s": 6.91460001400003,
+          "token_sha256": "735a1bbea05fef781cebc04afb2fedcbe8cca77dec030f76fb8d5085d454a066",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 173.4967149276073,
+          "ttft_median_ms": 748.5254954999618,
+          "itl_median_ms": 55.852190999985396,
+          "ttft_p95_ms": 1385.697150999988,
+          "itl_p95_ms": 56.61663999995881,
+          "completed_requests": 12,
+          "failed_requests": 0,
+          "generated_tokens": 1200,
+          "elapsed_s": 6.916557472000022,
+          "token_sha256": "735a1bbea05fef781cebc04afb2fedcbe8cca77dec030f76fb8d5085d454a066",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 173.58233865815814,
+          "ttft_median_ms": 749.097350999989,
+          "itl_median_ms": 55.86235199999123,
+          "ttft_p95_ms": 1385.2873320000185,
+          "itl_p95_ms": 56.5773480000189,
+          "completed_requests": 12,
+          "failed_requests": 0,
+          "generated_tokens": 1200,
+          "elapsed_s": 6.913145711000027,
+          "token_sha256": "735a1bbea05fef781cebc04afb2fedcbe8cca77dec030f76fb8d5085d454a066",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 675282944,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 2.7198449440000445,
+      "memory_after_load": {
+        "device_used_bytes": 7134511104,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 14.367844786356608,
+        "ttft_median_ms": 908.2744950000006,
+        "itl_median_ms": 761.075969000018,
+        "ttft_p95_ms": 1542.8950229999714,
+        "itl_p95_ms": 1392.5249810000082,
+        "completed_requests": 12,
+        "failed_requests": 0,
+        "generated_tokens": 24,
+        "elapsed_s": 1.670396664000009
+      },
+      "output_sample": "### Essay Number 0: An Introduction to Renewable Energy\n\nRenewable energy, often referred to as green energy, is a critical component in the global effort to transition away from fossil fuels and mitigate the impacts of climate change. Unlike traditional energy sources such as coal, oil, and natural gas, which are finite and contribute to environmental degradation, renewable energy sources are sustainable and have minimal environmental impact. These sources include solar, wind, hydro, geothermal, and biomass, each offering unique benefits and",
+      "memory_after_generation": {
+        "device_used_bytes": 7136608256,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [
+        12
+      ],
+      "median": {
+        "aggregate_tps": 173.54583021004154,
+        "ttft_median_ms": 749.097350999989,
+        "itl_median_ms": 55.852190999985396,
+        "ttft_p95_ms": 1385.697150999988,
+        "itl_p95_ms": 56.5773480000189
+      }
+    },
+    {
+      "batch_size": 12,
+      "mode": "sampled",
+      "graphs": false,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 15.402091262218438,
+          "ttft_median_ms": 1048.8269774999992,
+          "itl_median_ms": 766.8323879999832,
+          "ttft_p95_ms": 1938.337075999982,
+          "itl_p95_ms": 777.545463000024,
+          "completed_requests": 12,
+          "failed_requests": 0,
+          "generated_tokens": 1200,
+          "elapsed_s": 77.911497833,
+          "token_sha256": "357893c37ee2deac3f988bc526b7ef93ef65cfdd56e6d6fed0ef79a6a893d388",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 15.432975613281565,
+          "ttft_median_ms": 1053.304283999978,
+          "itl_median_ms": 765.9177164999846,
+          "ttft_p95_ms": 1943.6744739999767,
+          "itl_p95_ms": 771.2886310000044,
+          "completed_requests": 12,
+          "failed_requests": 0,
+          "generated_tokens": 1200,
+          "elapsed_s": 77.75558194799999,
+          "token_sha256": "357893c37ee2deac3f988bc526b7ef93ef65cfdd56e6d6fed0ef79a6a893d388",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 15.404771659146757,
+          "ttft_median_ms": 1049.8860010000044,
+          "itl_median_ms": 766.9801905000213,
+          "ttft_p95_ms": 1939.9141169999439,
+          "itl_p95_ms": 774.2447560000301,
+          "completed_requests": 12,
+          "failed_requests": 0,
+          "generated_tokens": 1200,
+          "elapsed_s": 77.89794140100003,
+          "token_sha256": "357893c37ee2deac3f988bc526b7ef93ef65cfdd56e6d6fed0ef79a6a893d388",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 677380096,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 2.7232794509999962,
+      "memory_after_load": {
+        "device_used_bytes": 7136608256,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 8.398879627672633,
+        "ttft_median_ms": 1202.3480244999973,
+        "itl_median_ms": 1329.6965979999982,
+        "ttft_p95_ms": 2089.3391569999835,
+        "itl_p95_ms": 1889.5183110000175,
+        "completed_requests": 12,
+        "failed_requests": 0,
+        "generated_tokens": 24,
+        "elapsed_s": 2.857523986999979
+      },
+      "output_sample": "### Essay Number 0: Renewable Energy\n\nRenewable energy is a critical component of modern energy systems, offering a sustainable alternative to traditional fossil fuels. These energy sources, which include solar, wind, hydro, geothermal, and biomass, are characterized by their ability to regenerate and their minimal impact on the environment. As the world faces the challenges of climate change, resource depletion, and environmental degradation, renewable energy has emerged as a vital solution.\n\n**Solar Energy**\n\nSolar energy harnesses the power",
+      "memory_after_generation": {
+        "device_used_bytes": 7136608256,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [],
+      "median": {
+        "aggregate_tps": 15.404771659146757,
+        "ttft_median_ms": 1049.8860010000044,
+        "itl_median_ms": 766.8323879999832,
+        "ttft_p95_ms": 1939.9141169999439,
+        "itl_p95_ms": 774.2447560000301
+      }
+    },
+    {
+      "batch_size": 12,
+      "mode": "sampled",
+      "graphs": true,
+      "status": "completed",
+      "runs": [
+        {
+          "aggregate_tps": 15.37265998653302,
+          "ttft_median_ms": 1048.6375830000156,
+          "itl_median_ms": 766.5449879999642,
+          "ttft_p95_ms": 1941.818712999975,
+          "itl_p95_ms": 774.3358520000356,
+          "completed_requests": 12,
+          "failed_requests": 0,
+          "generated_tokens": 1200,
+          "elapsed_s": 78.06066100800001,
+          "token_sha256": "357893c37ee2deac3f988bc526b7ef93ef65cfdd56e6d6fed0ef79a6a893d388",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 15.41223695957095,
+          "ttft_median_ms": 1047.481710999989,
+          "itl_median_ms": 766.0795840000105,
+          "ttft_p95_ms": 1937.2944089999464,
+          "itl_p95_ms": 774.160965999954,
+          "completed_requests": 12,
+          "failed_requests": 0,
+          "generated_tokens": 1200,
+          "elapsed_s": 77.86020959500001,
+          "token_sha256": "357893c37ee2deac3f988bc526b7ef93ef65cfdd56e6d6fed0ef79a6a893d388",
+          "matches_graph_off": true,
+          "full_length": true
+        },
+        {
+          "aggregate_tps": 15.407384080810518,
+          "ttft_median_ms": 1048.5820724999826,
+          "itl_median_ms": 766.357481,
+          "ttft_p95_ms": 1938.2509160000154,
+          "itl_p95_ms": 773.4718839999459,
+          "completed_requests": 12,
+          "failed_requests": 0,
+          "generated_tokens": 1200,
+          "elapsed_s": 77.88473330099998,
+          "token_sha256": "357893c37ee2deac3f988bc526b7ef93ef65cfdd56e6d6fed0ef79a6a893d388",
+          "matches_graph_off": true,
+          "full_length": true
+        }
+      ],
+      "memory_before_load": {
+        "device_used_bytes": 677380096,
+        "device_total_bytes": 192265846784
+      },
+      "engine_init_s": 2.7713861929998984,
+      "memory_after_load": {
+        "device_used_bytes": 7136608256,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "first_batch": {
+        "aggregate_tps": 8.20247708321107,
+        "ttft_median_ms": 1196.3867124999865,
+        "itl_median_ms": 1404.3134355000007,
+        "ttft_p95_ms": 2087.400164000087,
+        "itl_p95_ms": 1964.6764119999034,
+        "completed_requests": 12,
+        "failed_requests": 0,
+        "generated_tokens": 24,
+        "elapsed_s": 2.9259453890000486
+      },
+      "output_sample": "### Essay Number 0: Renewable Energy\n\nRenewable energy is a critical component of modern energy systems, offering a sustainable alternative to traditional fossil fuels. These energy sources, which include solar, wind, hydro, geothermal, and biomass, are characterized by their ability to regenerate and their minimal impact on the environment. As the world faces the challenges of climate change, resource depletion, and environmental degradation, renewable energy has emerged as a vital solution.\n\n**Solar Energy**\n\nSolar energy harnesses the power",
+      "memory_after_generation": {
+        "device_used_bytes": 7138705408,
+        "device_total_bytes": 192265846784,
+        "weights_bytes": 5647215616,
+        "kv_allocated_bytes": 704643072,
+        "scratch_planned_bytes": 96010240
+      },
+      "captured_batch_sizes": [
+        12
+      ],
+      "median": {
+        "aggregate_tps": 15.407384080810518,
+        "ttft_median_ms": 1048.5820724999826,
+        "itl_median_ms": 766.357481,
+        "ttft_p95_ms": 1938.2509160000154,
+        "itl_p95_ms": 774.160965999954
+      }
+    }
+  ],
+  "model": "qwen2.5-7b",
+  "revision": "a09a35458c702b33eeacc393d103063234e8bc28",
+  "model_path": "/root/zse_cache/qwen2.5-7b_a09a35458c702b33eeacc393d103063234e8bc28_int4_rowmajor.zse",
+  "gpu": "B200",
+  "quality_status": "limited_prior_rowmajor_smoke",
+  "notes": [
+    "Performance only; token parity is not semantic correctness.",
+    "Startup times are constructor-only, excluding imports, container startup and download.",
+    "First engine uses existing model volume; page-cache state is uncontrolled. Later engines reuse warmed caches.",
+    "First batch includes demand graph capture; measured trials follow warmup.",
+    "VRAM snapshots are device-wide, not peak or isolated process allocation.",
+    "Latency summaries are medians of trial statistics; p95 uses nearest rank."
+  ]
+}

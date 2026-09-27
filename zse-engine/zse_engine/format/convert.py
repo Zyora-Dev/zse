@@ -232,6 +232,7 @@ def convert_hf_to_zse(
             # Validate it matches this conversion
             if (progress_data.get("model_dir") == os.path.abspath(model_dir)
                     and progress_data.get("quant_method") == quant_method
+                    and progress_data.get("weight_layout") == "row_major"
                     and progress_data.get("group_size") == group_size):
                 resume_from = progress_data.get("completed_tensors", 0)
                 truncate_pos = progress_data.get("file_position", 0)
@@ -338,6 +339,7 @@ def _save_progress(
     """Save conversion progress for crash recovery."""
     data = {
         "model_dir": os.path.abspath(model_dir),
+        "weight_layout": "row_major",
         "quant_method": quant_method,
         "group_size": group_size,
         "completed_tensors": completed,
@@ -400,10 +402,6 @@ def _convert_tensor_fast(
             packed, scales, zeros = fast_quant.quantize_tensor_fast(
                 raw, dtype_str, num_elements, group_size,
             )
-            # Repack INT4 to tiled format for tensor core coalesced access
-            if len(shape) == 2:
-                N, K = shape
-                packed = fast_quant.repack_int4_tiled(packed, N, K)
             writer.add_weight_raw(
                 zse_name, shape, packed, scales, zeros,
                 group_size=group_size,

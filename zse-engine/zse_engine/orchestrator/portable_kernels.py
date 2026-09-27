@@ -524,7 +524,7 @@ def mfma_dequant_matmul_int4_v3(
 # Constraints:
 #   - M <= 8 (uses fixed-size local_array[8])
 #   - K % 8 == 0 (u32-aligned weight loads)
-#   - group_size >= 8 (so 8-K window stays in one group per lane)
+#   - group_size positive and divisible by 8 (one group per aligned 8-K window)
 
 @zse.kernel
 def bgemv_int4_wave64(
@@ -556,7 +556,7 @@ def bgemv_int4_wave64(
             acc[m_init] = 0.0
 
         # Per-lane scale/zero cache (group changes are rare since one lane's
-        # 8-K window fits inside one group when group_size >= 8).
+        # 8-K window fits inside one group when group_size is divisible by 8).
         prev_g: int = -1
         s_val: float = 0.0
         z_val: float = 0.0
@@ -621,7 +621,7 @@ def bgemv_int4_wave64(
 # Constraints:
 #   - M <= 16 (uses fixed-size local_array[16] accumulator)
 #   - K % 8 == 0 (u32-aligned weight loads)
-#   - group_size >= 8 (so 8-K window stays in one group per lane)
+#   - group_size positive and divisible by 8 (one group per aligned 8-K window)
 
 @zse.kernel
 def bgemv_int4_wave64_m16(
@@ -653,7 +653,7 @@ def bgemv_int4_wave64_m16(
             acc[m_init] = 0.0
 
         # Per-lane scale/zero cache (group changes are rare since one lane's
-        # 8-K window fits inside one group when group_size >= 8).
+        # 8-K window fits inside one group when group_size is divisible by 8).
         prev_g: int = -1
         s_val: float = 0.0
         z_val: float = 0.0
@@ -729,7 +729,7 @@ def bgemv_int4_wave64_m16(
 # Constraints:
 #   - M <= 8 (uses fixed-size local_array[8])
 #   - K % 8 == 0 (u32-aligned weight loads)
-#   - group_size >= 8 (so 8-K window stays in one group per lane)
+#   - group_size positive and divisible by 8 (one group per aligned 8-K window)
 
 @zse.kernel
 def bgemv_int4_wave32(
@@ -761,7 +761,7 @@ def bgemv_int4_wave32(
             acc[m_init] = 0.0
 
         # Per-lane scale/zero cache (group changes are rare since one lane's
-        # 8-K window fits inside one group when group_size >= 8).
+        # 8-K window fits inside one group when group_size is divisible by 8).
         prev_g: int = -1
         s_val: float = 0.0
         z_val: float = 0.0

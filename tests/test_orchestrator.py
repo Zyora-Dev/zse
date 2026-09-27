@@ -117,6 +117,280 @@ class TestVRAMAllocator:
 # Test WeightStore
 # ============================================================================
 
+class TestConcurrentBenchmark:
+    @pytest.mark.parametrize("model", ["qwen2.5-7b", "unsupported"])
+    def test_model_selector_spawn(self, model):
+        import importlib.util
+        from unittest.mock import Mock, patch
+
+        path = os.path.join(os.path.dirname(__file__), "test_modal_b200_ab2.py")
+        spec = importlib.util.spec_from_file_location("benchmark_model_test", path)
+        module = importlib.util.module_from_spec(spec)
+        modal = Mock()
+        modal.App.return_value.local_entrypoint.return_value = lambda function: function
+        with patch.dict(sys.modules, {"modal": modal}):
+            spec.loader.exec_module(module)
+        if model == "unsupported":
+            with pytest.raises(ValueError, match="Unsupported benchmark model"):
+                module.main(model=model, sampler_ab=True, spawn=True)
+            module.ab2.spawn.assert_not_called()
+        else:
+            module.main(model=model, sampler_ab=True, spawn=True)
+            module.ab2.spawn.assert_called_once_with(12, False, False, False, True, model, False, False)
+
+    @pytest.mark.parametrize("failure", [None, "request_error", "parity"])
+    def test_overall_matrix_and_checkpoints(self, failure):
+        import importlib.util
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+        from zse_engine.orchestrator.sampler import Sampler
+
+        path = os.path.join(os.path.dirname(__file__), "test_modal_b200_ab2.py")
+        spec = importlib.util.spec_from_file_location("benchmark_overall_test", path)
+        module = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {"modal": Mock()}):
+            spec.loader.exec_module(module)
+        engines = []
+
+        def build_engine(disable_medium, max_prefill_per_step):
+            runner = SimpleNamespace(_graph_runner=object(),
+                                     _batched_graph_runners={max_prefill_per_step: object()})
+
+            def destroy_graph():
+                runner._graph_runner = None
+                runner._batched_graph_runners = {}
+
+            runner.destroy_graph = destroy_graph
+            engine = SimpleNamespace(_model_runner=runner, _sampler=Sampler(),
+                                     _tokenizer=SimpleNamespace(decode=lambda tokens: "sample"),
+                                     destroy=Mock())
+            engines.append(engine)
+            return engine
+
+        def measure(engine, prompts, max_tokens, output_tokens=None, **params):
+            if failure == "request_error":
+                raise RuntimeError("request failed")
+            if output_tokens is not None:
+                token = 9 if failure == "parity" and engine._model_runner._graph_runner else 7
+                for row in output_tokens:
+                    row.extend([token] * max_tokens)
+            return dict(aggregate_tps=10.0, generated_tokens=len(prompts) * max_tokens,
+                        ttft_median_ms=2.0, itl_median_ms=3.0, ttft_p95_ms=4.0,
+                        itl_p95_ms=5.0, completed_requests=len(prompts), failed_requests=0)
+
+        persist = Mock()
+        with patch.object(module, "measure_batch", side_effect=measure):
+            result = module.benchmark_overall(build_engine, ["prompt"] * 12,
+                                             lambda engine: {"device_used_bytes": 123}, persist)
+        assert len(result["cases"]) == len(engines) == persist.call_count == 12
+        for engine in engines:
+            engine.destroy.assert_called_once_with()
+        for case in result["cases"]:
+            if failure == "request_error":
+                assert case["status"] == "failed"
+                assert "request failed" in case["error"]
+            else:
+                assert case["status"] == "completed"
+                assert len(case["runs"]) == 3
+                assert case["median"]["aggregate_tps"] == 10.0
+                for sample in case["runs"]:
+                    assert sample["full_length"] is True
+                    assert sample["matches_graph_off"] == (failure != "parity" or not case["graphs"])
+
+    @pytest.mark.parametrize("failure", [None, "parity", "early"])
+    def test_sampler_comparison_gates_and_cleanup(self, failure):
+        import importlib.util
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+        from zse_engine.orchestrator.sampler import Sampler
+
+        path = os.path.join(os.path.dirname(__file__), "test_modal_b200_ab2.py")
+        spec = importlib.util.spec_from_file_location("benchmark_sampler_test", path)
+        module = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {"modal": Mock()}):
+            spec.loader.exec_module(module)
+        engines = []
+
+        def build_engine(disable_medium, max_prefill_per_step):
+            assert disable_medium is False
+            assert max_prefill_per_step == 2
+            engine = SimpleNamespace(_sampler=Sampler(), destroy=Mock(),
+                                     _model_runner=SimpleNamespace(_batched_graph_runners={2: object()}))
+            engines.append(engine)
+            return engine
+
+        def measure(engine, prompts, max_tokens, output_tokens=None, **params):
+            assert params == dict(temperature=0.8, repetition_penalty=1.0, top_k=50, top_p=0.9)
+            if output_tokens is not None:
+                token = 9 if failure == "parity" and len(engines) == 2 else 7
+                for row in output_tokens:
+                    row.extend([token] * max_tokens)
+            count = len(prompts) * max_tokens
+            return dict(aggregate_tps=10.0, generated_tokens=count - (failure == "early"))
+
+        with patch.object(module, "measure_batch", side_effect=measure):
+            if failure:
+                with pytest.raises(AssertionError):
+                    module.compare_samplers(build_engine, ["one", "two"], max_tokens=4)
+            else:
+                result = module.compare_samplers(build_engine, ["one", "two"], max_tokens=4)
+                assert result["token_parity"] is True
+                assert len(engines) == 2
+                assert result["compact"]["median_tps"] == 10.0
+                assert len(result["reference"]["runs"]) == 3
+        for engine in engines:
+            engine.destroy.assert_called_once_with()
+
+    def test_stage_timings_preserve_results_and_restore(self):
+        import importlib.util
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+
+        path = os.path.join(os.path.dirname(__file__), "test_modal_b200_ab2.py")
+        spec = importlib.util.spec_from_file_location("benchmark_timings_test", path)
+        module = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {"modal": Mock()}):
+            spec.loader.exec_module(module)
+        original = Mock(return_value=7)
+        owner = SimpleNamespace(sample=original)
+        clock = iter([1.0, 3.0, 4.0, 7.0])
+        timings = module.StageTimings(clock=lambda: next(clock))
+        timings.wrap(owner, "sample", "sampling")
+        assert owner.sample(b"logits", temperature=0.8) == 7
+        original.assert_called_once_with(b"logits", temperature=0.8)
+        assert timings.seconds == {"sampling": 2.0}
+        timings.reset()
+        assert timings.seconds == timings.calls == {}
+        original.side_effect = ValueError("failed")
+        with pytest.raises(ValueError, match="failed"):
+            owner.sample()
+        assert timings.seconds == {"sampling": 3.0}
+        assert timings.calls == {"sampling": 1}
+        timings.restore()
+        assert owner.sample is original
+
+    @pytest.mark.parametrize("failure", [None, "incomplete", "request_error", "finish_error", "empty"])
+    def test_metrics_and_failure_gates(self, failure):
+        import importlib.util
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+
+        path = os.path.join(os.path.dirname(__file__), "test_modal_b200_ab2.py")
+        spec = importlib.util.spec_from_file_location("benchmark_metrics_test", path)
+        module = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {"modal": Mock()}):
+            spec.loader.exec_module(module)
+
+        callbacks = []
+        now = [0.0]
+
+        def add_request(**kwargs):
+            callbacks.append((kwargs["on_token"], kwargs["on_finish"]))
+
+        def step():
+            now[0] += 1.0
+            for on_token, on_finish in callbacks:
+                if failure != "empty":
+                    on_token(7)
+                if now[0] == 2.0 and failure != "incomplete":
+                    reason = "ERROR" if failure == "finish_error" else "LENGTH"
+                    on_finish(SimpleNamespace(finish_reason=SimpleNamespace(name=reason)))
+            return SimpleNamespace(errors={"request": "failed"} if failure == "request_error" else {})
+
+        engine = SimpleNamespace(add_request=add_request, step=step)
+        if failure:
+            with pytest.raises(RuntimeError):
+                module.measure_batch(engine, ["one", "two"], 2, clock=lambda: now[0])
+        else:
+            metrics = module.measure_batch(engine, ["one", "two"], 2, clock=lambda: now[0])
+            assert metrics == dict(aggregate_tps=2.0, ttft_median_ms=1000.0,
+                                   itl_median_ms=1000.0, generated_tokens=4, elapsed_s=2.0,
+                                   ttft_p95_ms=1000.0, itl_p95_ms=1000.0,
+                                   completed_requests=2, failed_requests=0)
+
+
+class TestBatchedDecodeGraph:
+    @pytest.mark.parametrize("return_logits", [False, True])
+    def test_capture_only_requested_batch_and_reuse(self, return_logits):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from zse_engine.orchestrator.model_runner import ModelRunner
+
+        runner = ModelRunner.__new__(ModelRunner)
+        runner._kv_cache = Mock()
+        runner._kv_cache.get_attention_metadata.return_value = SimpleNamespace(
+            block_tables=[[0], [1]], seq_lengths=[2, 2],
+        )
+        runner._gpu_mem = Mock()
+        runner._gpu_mem.copy_device_to_host.return_value = struct.pack("<2i", 7, 9)
+        runner._decode_token_buf = object()
+        runner._decode_pos_buf = object()
+        runner._decode_bt_buf = object()
+        runner._decode_seqlens_buf = object()
+        runner._graph_max_blocks = 4
+        runner._graph_argmax_buf = SimpleNamespace(data_ptr=123)
+        runner._batched_graph_runners = {}
+        runner._bulk_download_logits = Mock(return_value=[b"row-one", b"row-two"])
+        graph = Mock()
+
+        def capture(batch_size, metadata):
+            runner._batched_graph_runners[batch_size] = (graph, None)
+
+        runner._capture_batched_graph = Mock(side_effect=capture)
+        for _ in range(2):
+            result = runner.batched_decode_graph(
+                [1, 2], [10, 11], [1, 1], return_logits=return_logits,
+            )
+            assert result == ([b"row-one", b"row-two"] if return_logits else [7, 9])
+
+        assert runner._capture_batched_graph.call_count == 1
+        assert set(runner._batched_graph_runners) == {2}
+        assert graph.replay.call_count == graph.sync.call_count == 2
+        assert runner._kv_cache.extend_sequence.call_count == 4
+        assert runner._bulk_download_logits.call_count == (2 if return_logits else 0)
+        assert runner._gpu_mem.copy_device_to_host.call_count == (0 if return_logits else 2)
+
+
+class TestInt4Dispatch:
+    @pytest.mark.parametrize("backend,batch_size,group_size,disabled,expected", [
+        ("rocm", 8, 12, False, "batched_dequant_gemv_int4"),
+        ("rocm", 9, 12, False, "batched_dequant_gemv_int4"),
+        ("rocm", 16, 12, False, "batched_dequant_gemv_int4"),
+        ("rocm", 8, 24, False, "bgemv_int4_wave64"),
+        ("rocm", 8, 128, False, "bgemv_int4_wave64_v2"),
+        ("rocm", 9, 128, False, "bgemv_int4_wave64_m16"),
+        ("rocm", 12, 128, False, "bgemv_int4_wave64_m16"),
+        ("rocm", 16, 128, False, "bgemv_int4_wave64_m16"),
+        ("rocm", 17, 128, False, "mfma_dequant_matmul_int4_v3"),
+        ("rocm", 12, 128, True, "mfma_dequant_matmul_int4_v3"),
+        ("cuda", 8, 128, False, "batched_dequant_gemv_int4"),
+        ("cuda", 9, 128, False, "batched_dequant_gemv_int4"),
+        ("cuda", 12, 128, False, "batched_dequant_gemv_int4"),
+        ("cuda", 16, 128, False, "batched_dequant_gemv_int4"),
+        ("cuda", 17, 128, False, "tiled_dequant_matmul_int4"),
+        ("cuda", 12, 128, True, "tiled_dequant_matmul_int4"),
+    ])
+    def test_group_and_batch_boundaries(self, backend, batch_size, group_size,
+                                       disabled, expected):
+        from unittest.mock import Mock
+        from zse_engine.orchestrator.model_runner import ModelRunner
+        from zse_engine.orchestrator.weight_loader import GPUWeight
+
+        runner = ModelRunner.__new__(ModelRunner)
+        runner._backend = backend
+        runner._disable_medium_gemv = disabled
+        runner._kernels = Mock()
+        runner._make_tensor_from_ptr = Mock()
+        weight = GPUWeight(
+            name="projection", shape=(128, 384), dtype="int4",
+            data_ptr=1, data_nbytes=24576, scales_ptr=2, zeros_ptr=3,
+            group_size=group_size,
+        )
+        runner._launch_matmul(None, None, weight, batch_size, 128, 384)
+        assert runner._kernels.launch.call_count == 1
+        assert runner._kernels.launch.call_args.args[0] == expected
+
+
 class TestWeightStore:
     def test_basic(self):
         from zse_engine.orchestrator.weight_loader import WeightStore, GPUWeight
@@ -266,6 +540,52 @@ class TestSampler:
         s2 = Sampler(seed=123)
         t2 = s2.sample(logits, 4, temperature=1.0, top_p=1.0, top_k=0)
         assert t1 == t2
+
+    @pytest.mark.parametrize("top_k", [0, 1, 3, 50, 257, 300])
+    @pytest.mark.parametrize("top_p", [0.0, 0.5, 0.9, 1.0])
+    @pytest.mark.parametrize("temperature", [0.0, 0.8, 1.0, 1.7])
+    def test_compact_sampling_matches_reference(self, top_k, top_p, temperature):
+        import random
+        from zse_engine.orchestrator.sampler import Sampler
+
+        generator = random.Random(123)
+        cases = [
+            [generator.uniform(-9, 9) for token in range(257)],
+            [float(token % 5) for token in range(257)],
+            [1.0] * 257,
+        ]
+        for values in cases:
+            data = self._make_logits(values)
+            for past_tokens in (None, {1, 3, 99}, {1: 8, 3: 2, 99: 1, -1: 4, 500: 2}):
+                optimized = Sampler(seed=20260927)
+                reference = Sampler(seed=20260927)
+                reference._sample_top_k = lambda *args: None
+                params = dict(temperature=temperature, top_k=top_k, top_p=top_p,
+                              repetition_penalty=1.1, past_tokens=past_tokens)
+                for draw in range(12):
+                    assert optimized.sample(data, len(values), **params) == reference.sample(data, len(values), **params)
+                assert optimized._rng.getstate() == reference._rng.getstate()
+
+    def test_compact_sampling_cutoff_ties_and_tail_fallback(self):
+        from zse_engine.orchestrator.sampler import Sampler
+
+        for draw in (0.0, 0.25, 0.5, 0.75, 0.9999999999999999, 1.0):
+            optimized = Sampler()
+            reference = Sampler()
+            optimized._rng.random = lambda: draw
+            reference._rng.random = lambda: draw
+            reference._sample_top_k = lambda *args: None
+            data = self._make_logits([-10, 2, 2, 2, 2, -10])
+            assert optimized.sample(data, 6, top_k=1) == reference.sample(data, 6, top_k=1)
+
+    def test_compact_sampling_nonfinite_fallback(self):
+        from zse_engine.orchestrator.sampler import Sampler
+
+        sampler = Sampler(seed=42)
+        for value in (float('-inf'), float('inf'), float('nan')):
+            state = sampler._rng.getstate()
+            assert sampler._sample_top_k([1.0, value, 0.0], 1, 0.9) is None
+            assert sampler._rng.getstate() == state
 
     def test_decode_fp16_error(self):
         from zse_engine.orchestrator.sampler import Sampler

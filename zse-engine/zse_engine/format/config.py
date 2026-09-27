@@ -14,7 +14,7 @@ class QuantConfig:
     bits: int = DEFAULT_QUANT_BITS
     group_size: int = DEFAULT_GROUP_SIZE
     scale_dtype: str = "float16"  # dtype for scales and zeros
-    tiled_weights: bool = True    # INT4 weights stored in WMMA-tiled format
+    tiled_weights: bool = False    # INT4 weights stored in WMMA-tiled format
 
     def to_dict(self) -> dict:
         return {"method": self.method, "bits": self.bits,

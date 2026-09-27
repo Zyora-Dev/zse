@@ -1,0 +1,36 @@
+{
+  "model": "qwen2.5-7b",
+  "revision": "a09a35458c702b33eeacc393d103063234e8bc28",
+  "smoke": [
+    {
+      "temperature": 0.0,
+      "text": "### Essay Number 0: An Introduction to Renewable Energy\n\nRenewable energy, often referred to as green energy, is a critical component in the global effort to transition away from fossil fuels and mitigate the impacts of climate change. Unlike traditional",
+      "metrics": {
+        "aggregate_tps": 64.56715452788035,
+        "ttft_median_ms": 310.28436600000475,
+        "itl_median_ms": 7.378297000002476,
+        "ttft_p95_ms": 310.28436600000475,
+        "itl_p95_ms": 7.745225999997274,
+        "completed_requests": 1,
+        "failed_requests": 0,
+        "generated_tokens": 48,
+        "elapsed_s": 0.7434120390000061
+      }
+    },
+    {
+      "temperature": 0.8,
+      "text": "### Essay Number 0: An Introduction to Renewable Energy\n\nRenewable energy, a term that encompasses a variety of energy sources that are naturally replenished and are replenished on a human timescale, has become increasingly important in the modern",
+      "metrics": {
+        "aggregate_tps": 32.008446260765524,
+        "ttft_median_ms": 124.30076700000825,
+        "itl_median_ms": 29.229251999993267,
+        "ttft_p95_ms": 124.30076700000825,
+        "itl_p95_ms": 29.77715000000103,
+        "completed_requests": 1,
+        "failed_requests": 0,
+        "generated_tokens": 48,
+        "elapsed_s": 1.4996041859999991
+      }
+    }
+  ]
+}

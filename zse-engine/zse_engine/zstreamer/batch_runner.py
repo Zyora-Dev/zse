@@ -283,11 +283,15 @@ class BatchRunner:
                         if req.is_finished:
                             self._finalize_request(req, result, finalized)
                 else:
-                    # Standard path: download logits, CPU sampling
-                    all_logits = self._runner.batched_decode(
-                        token_ids, seq_ids, positions,
-                        lora_adapter=lora_adapter,
-                    )
+                    if self._runner._graph_runner is not None and lora_adapter is None:
+                        all_logits = self._runner.batched_decode_graph(
+                            token_ids, seq_ids, positions, return_logits=True,
+                        )
+                    else:
+                        all_logits = self._runner.batched_decode(
+                            token_ids, seq_ids, positions,
+                            lora_adapter=lora_adapter,
+                        )
 
                     # Sample tokens and update state
                     for i, req in enumerate(group_reqs):

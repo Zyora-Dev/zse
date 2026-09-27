@@ -1871,8 +1871,10 @@ class ModelRunner:
         token_ids: List[int],
         seq_ids: List[int],
         positions: List[int],
-    ) -> List[int]:
-        """Graph-captured batched decode. Returns M token IDs (greedy only).
+        *,
+        return_logits: bool = False,
+    ) -> List:
+        """Graph-captured decode returning token IDs or fp16 logit rows.
 
         Captures a graph for batch size M on first call, replays on subsequent calls.
         Different batch sizes get separate captured graphs.
@@ -1912,20 +1914,14 @@ class ModelRunner:
         if M not in self._batched_graph_runners:
             # Capture a new graph for batch size M
             self._capture_batched_graph(M, meta)
-            # Opportunistically pre-capture all smaller batch sizes too, using
-            # the first M' seq_ids from this batch. This eliminates the recapture
-            # stall when sequences finish mid-stream and M shrinks.
-            for sub_m in range(M - 1, 0, -1):
-                if sub_m in self._batched_graph_runners:
-                    continue
-                sub_meta = self._kv_cache.get_attention_metadata(seq_ids[:sub_m])
-                sub_meta.max_blocks_per_seq = max_blocks
-                self._capture_batched_graph(sub_m, sub_meta)
 
         # Replay (always — captured fresh above or hit cache)
         gr, stream = self._batched_graph_runners[M]
         gr.replay()
         gr.sync()
+
+        if return_logits:
+            return self._bulk_download_logits(M)
 
         # Bulk download all M argmax results in ONE DtoH transfer (4*M bytes)
         # Previously did M separate 4-byte copies = M * ~50us ctypes overhead.
@@ -2256,11 +2252,11 @@ class ModelRunner:
                 )
             elif use_multi_gemv:
                 # ROCm: use portable wave-64 kernel (2.13x faster than C-string bgemv at M=4).
-                # Constraints: K%8==0 (u32-aligned), group_size>=8 (lane K-window fits a group).
+                # Constraints: K%8==0 and group_size%8==0 keep each lane window within a group.
                 use_wave64_bgemv = (
                     self._backend == "rocm"
                     and (K % 8 == 0)
-                    and (weight.group_size >= 8)
+                    and (weight.group_size > 0 and weight.group_size % 8 == 0)
                 )
                 # 128-bit (uint4) variant: tighter constraints, ~1.10x avg over wave-64.
                 use_wave64_v2 = (
@@ -2314,7 +2310,7 @@ class ModelRunner:
                             M, N, K, weight.group_size,
                             stream=stream,
                         )
-            elif use_medium_gemv and self._backend == "rocm" and (K % 8 == 0) and (weight.group_size >= 8):
+            elif use_medium_gemv and self._backend == "rocm" and (K % 8 == 0) and (weight.group_size > 0 and weight.group_size % 8 == 0):
                 # ROCm medium-concurrency (M=9..16): 16-wide wave-64 bgemv keeps the
                 # weight-bandwidth-amortized path instead of the prefill-tuned kernel.
                 self._kernels.launch(
